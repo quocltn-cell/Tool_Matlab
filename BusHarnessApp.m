@@ -63,13 +63,18 @@ logSplit = uigridlayout(workspace, [1 2], 'ColumnWidth', {'1x', '1x'}, ...
     'Padding', [0 0 0 0], 'ColumnSpacing', 10, 'BackgroundColor', paper);
 pendingPanel = uipanel(logSplit, 'Title', 'testcase load', ...
     'FontWeight', 'bold');
-pendingGrid = uigridlayout(pendingPanel, [2 1], 'RowHeight', {22, '1x'}, ...
+pendingGrid = uigridlayout(pendingPanel, [2 1], 'RowHeight', {28, '1x'}, ...
     'Padding', [10 6 10 8], 'RowSpacing', 4);
-pendingCount = uilabel(pendingGrid, 'Text', 'Add an Excel test case file to show available test cases.', ...
+pendingToolbar = uigridlayout(pendingGrid, [1 2], ...
+    'ColumnWidth', {'1x', 100}, 'Padding', [0 0 0 0], 'ColumnSpacing', 6);
+pendingCount = uilabel(pendingToolbar, 'Text', 'Add an Excel test case file to show available test cases.', ...
     'FontColor', muted);
+pendingSelectAll = uibutton(pendingToolbar, 'Text', 'Select All', 'Enable', 'off', ...
+    'ButtonPushedFcn', @(~, ~) toggleAllCases('pending'));
 pendingList = uitable(pendingGrid, 'Data', emptyTestcaseTable(), ...
     'ColumnName', {'Import', 'Test Case'}, 'ColumnEditable', [true false], ...
-    'ColumnWidth', {65, 'auto'}, 'RowName', {});
+    'ColumnWidth', {65, 'auto'}, 'RowName', {}, ...
+    'CellEditCallback', @(~, ~) refreshSelectAllButtons());
 
 results = uipanel(logSplit, 'Title', 'Build Log' , 'FontWeight', 'bold');
 resultsGrid = uigridlayout(results, [1 1], 'Padding', [10 6 10 10]);
@@ -121,13 +126,18 @@ buildTestButton = uibutton(testActions, 'Text', 'Build Test', 'Enable', 'off', .
 testcases = uipanel(testLayout, 'Title', 'Imported Test Cases', 'FontWeight', 'bold');
 testcases.Layout.Row = [2 3];
 testcases.Layout.Column = 1;
-testcaseGrid = uigridlayout(testcases, [2 1], 'RowHeight', {24, '1x'}, ...
+testcaseGrid = uigridlayout(testcases, [2 1], 'RowHeight', {28, '1x'}, ...
     'Padding', [10 6 10 10], 'RowSpacing', 5);
-testcaseCount = uilabel(testcaseGrid, 'Text', 'Select an Excel file to import test cases.', ...
+testcaseToolbar = uigridlayout(testcaseGrid, [1 2], ...
+    'ColumnWidth', {'1x', 100}, 'Padding', [0 0 0 0], 'ColumnSpacing', 6);
+testcaseCount = uilabel(testcaseToolbar, 'Text', 'Select an Excel file to import test cases.', ...
     'FontColor', muted);
+testcaseSelectAll = uibutton(testcaseToolbar, 'Text', 'Select All', 'Enable', 'off', ...
+    'ButtonPushedFcn', @(~, ~) toggleAllCases('imported'));
 testcaseList = uitable(testcaseGrid, 'Data', emptyTestcaseTable(), ...
     'ColumnName', {'Select', 'Test Case'}, 'ColumnEditable', [true false], ...
-    'ColumnWidth', {54, 'auto'}, 'RowName', {});
+    'ColumnWidth', {54, 'auto'}, 'RowName', {}, ...
+    'CellEditCallback', @(~, ~) refreshSelectAllButtons());
 
 runSettings = uipanel(testLayout, 'Title', 'Test Settings', 'FontWeight', 'bold');
 runSettings.Layout.Row = 2;
@@ -585,6 +595,7 @@ updateProjectView();
             pendingList.Data = emptyTestcaseTable();
             testcaseCount.Text = 'Select an Excel file to import test cases.';
             pendingCount.Text = 'No Excel test cases loaded.';
+            refreshSelectAllButtons();
             return
         end
         try
@@ -607,12 +618,54 @@ updateProjectView();
             testcaseCount.Text = sprintf('%d imported test case(s)', numel(current));
             pendingCount.Text = sprintf('%d Excel test cases (%d in Signal Editor). Tick cases to create/update.', ...
                 numel(names), nnz(alreadyLoaded));
+            refreshSelectAllButtons();
         catch failure
             testcaseList.Data = emptyTestcaseTable();
             pendingList.Data = emptyTestcaseTable();
             testcaseCount.Text = 'Could not read Excel testcase names.';
             pendingCount.Text = 'Could not preview Excel test cases.';
+            refreshSelectAllButtons();
             % The selection preview is independent of build log.
+        end
+    end
+
+    function toggleAllCases(whichList)
+        % Toggle only the checkbox column, without changing testcase names.
+        if busy
+            return
+        end
+        if strcmp(whichList, 'pending')
+            tbl = pendingList;
+        else
+            tbl = testcaseList;
+        end
+        rows = tbl.Data;
+        if isempty(rows) || height(rows) == 0
+            return
+        end
+        newValue = ~all(rows.Selected);
+        rows.Selected(:) = newValue;
+        tbl.Data = rows;
+        refreshSelectAllButtons();
+    end
+
+    function refreshSelectAllButtons()
+        % Keep both controls in sync with individual checkbox edits.
+        updateSelectAllButton(pendingSelectAll, pendingList.Data);
+        updateSelectAllButton(testcaseSelectAll, testcaseList.Data);
+    end
+
+    function updateSelectAllButton(btn, rows)
+        if isempty(rows) || height(rows) == 0
+            btn.Text = 'Select All';
+            btn.Enable = 'off';
+        else
+            if all(rows.Selected)
+                btn.Text = 'Deselect All';
+            else
+                btn.Text = 'Select All';
+            end
+            btn.Enable = matlab.lang.OnOffSwitchState(~busy);
         end
     end
 
@@ -1087,11 +1140,14 @@ updateProjectView();
             isfile(fullfile(projectRoot, project.TestManagerFile));
         runTestButton.Enable = matlab.lang.OnOffSwitchState(~value && hasHarness && hasTestFile);
         if value
+            testcaseSelectAll.Enable = 'off';
+            pendingSelectAll.Enable = 'off';
             testcaseList.Enable = 'off';
             pendingList.Enable = 'off';
         else
             testcaseList.Enable = 'on';
             pendingList.Enable = 'on';
+            refreshSelectAllButtons();
         end
         fastRestart.Enable = enabled;
         simulationMode.Enable = enabled;

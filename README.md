@@ -1,4 +1,12 @@
-# Simulink Testing v1.2.58
+# Simulink Testing v1.2.59
+
+## v1.2.59 — Select All testcase
+
+- Setting → **testcase load**: nút **Select All / Deselect All** để chọn/bỏ chọn toàn bộ testcase từ Excel.
+- Run Test → **Imported Test Cases**: nút **Select All / Deselect All** để chọn/bỏ chọn toàn bộ testcase đã import.
+- Nút tự đồng bộ với trạng thái checkbox, bị vô hiệu khi danh sách rỗng hoặc tool đang xử lý.
+- Hai danh sách chọn độc lập; không thay đổi phần Data Input/Output.
+
 
 ## Data Output timeline and cursor synchronization
 
