@@ -1,4 +1,10 @@
-# Simulink Testing v1.2.59
+# Simulink Testing v1.2.60
+
+## v1.2.60 — Colored Output testcase statuses
+- Remove the redundant PASS CASES / FAIL CASES list from Data → Output.
+- Color the testcase rows in the single-selection checkbox table: light red for Failed, light green for Passed.
+- Preserve totals and Pass/Fail counts above the table; keep search and one-case-only selection.
+- Refresh colors whenever a search filter or Run Test result changes. Older MATLAB versions without table styling continue to show test statuses in text.
 
 ## v1.2.59 — Select All testcase
 

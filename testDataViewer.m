@@ -18,21 +18,13 @@ for mode = 1:2
     main = uigridlayout(tab,[1 2],'ColumnWidth',{260,'1x'},'Padding',[6 6 6 6], ...
         'ColumnSpacing',8);
     left = uipanel(main,'Title','Test Cases');
-    if mode == 2
-        chooser = uigridlayout(left,[5 1],'RowHeight',{25,26,86,26,'1x'}, ...
-            'Padding',[7 8 7 8],'RowSpacing',6);
-    else
-        chooser = uigridlayout(left,[4 1],'RowHeight',{25,26,26,'1x'}, ...
-            'Padding',[7 8 7 8],'RowSpacing',6);
-    end
+    % Both Input and Output use the same compact selection layout.
+    % Pass/Fail are indicated by row colors instead of a separate list box.
+    chooser = uigridlayout(left,[4 1],'RowHeight',{25,26,26,'1x'}, ...
+        'Padding',[7 8 7 8],'RowSpacing',6);
     info = uilabel(chooser,'Text','Run Test to view data','FontColor',ink);
     search = uieditfield(chooser,'text','Placeholder','Search testcase name...', ...
         'ValueChangedFcn',@(~,~) rebuildCases(mode));
-    if mode == 2
-        summary = uitextarea(chooser,'Editable','off','Value',{'Pass: -';'Fail: -'});
-    else
-        summary = [];
-    end
     uilabel(chooser,'Text','Select one testcase:','FontColor',ink);
     if mode == 1
         cases = uitable(chooser,'Data',table(false(0,1),strings(0,1), ...
@@ -80,7 +72,7 @@ for mode = 1:2
     scroll = uigridlayout(rightGrid,[1 1],'Scrollable','on', ...
         'Padding',[4 4 4 4]);
     views{mode} = struct('Info',info,'Search',search,'Cases',cases, ...
-        'Summary',summary,'SignalList',signalList, ...
+        'SignalList',signalList, ...
         'SignalSearch',signalSearch,'Cursor',cursor,'CursorTime',cursorTime,'Scroll',scroll, ...
         'Diagnostic',diagnosticLabel, ...
         'Traces',{{}},'Markers',{{}},'Readouts',{{}},'CurrentSignals',[]);
@@ -176,10 +168,6 @@ viewer.setExcelInputs = @setExcelInputs;
             pass = sum(strcmpi(outcomes,'Passed'));
             fail = sum(strcmpi(outcomes,'Failed'));
             v.Info.Text = sprintf('Total: %d | Pass: %d | Fail: %d',numel(names),pass,fail);
-            passNames = names(strcmpi(outcomes,'Passed'));
-            failNames = names(strcmpi(outcomes,'Failed'));
-            v.Summary.Value = cellstr(["PASS CASES (" + string(numel(passNames)) + ")"; ...
-                passNames; "FAIL CASES (" + string(numel(failNames)) + ")"; failNames]);
             labels = names + " [" + outcomes + "]";
         end
         searchText = strtrim(string(v.Search.Value));
@@ -227,9 +215,36 @@ viewer.setExcelInputs = @setExcelInputs;
                 v.Cases.Data = table(logical(checked(:)),reshape(labels,[],1), ...
                     'VariableNames',{'Selected','TestCase'});
             end
+            % The rows correspond to the FILTERED case list. Always reset
+            % old styles before adding status colors, so search results or
+            % a new run cannot leave a color on the wrong testcase.
+            styleOutputCaseRows(v.Cases,outcomes(keep));
             updateOutputChoices();
         end
         render(mode);
+    end
+
+    function styleOutputCaseRows(caseTable,filteredOutcomes)
+        % uistyle/addStyle are supported by recent MATLAB UI tables.
+        % Use a safe fallback on older releases without breaking selection.
+        try
+            removeStyle(caseTable);
+            filteredOutcomes = reshape(string(filteredOutcomes),[],1);
+            failedRows = find(strcmpi(filteredOutcomes,'Failed'));
+            passedRows = find(strcmpi(filteredOutcomes,'Passed'));
+            if ~isempty(failedRows)
+                redStyle = uistyle('BackgroundColor',[1.00 0.88 0.88]);
+                addStyle(caseTable,redStyle,'row',failedRows);
+            end
+            if ~isempty(passedRows)
+                greenStyle = uistyle('BackgroundColor',[0.87 0.97 0.88]);
+                addStyle(caseTable,greenStyle,'row',passedRows);
+            end
+        catch stylingError
+            % Cosmetic color support must not prevent test selection.
+            warning('SimulinkTesting:OutputCaseColors', ...
+                'Could not color output testcase rows: %s',stylingError.message);
+        end
     end
 
     function selectOutputCase(evt)
