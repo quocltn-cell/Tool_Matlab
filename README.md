@@ -1,4 +1,12 @@
-# Simulink Testing v1.2.63
+# Simulink Testing v1.2.64
+
+## v1.2.64 — Multi-sheet import, hierarchical selection and strict value ranges
+
+- Reads **all testcase sheets** in each Excel workbook (sheets without a `testcase_name` header are skipped). Test Common workbooks continue to use their separate reader.
+- **Setting → testcase load:** checkbox rows grouped as **File → Sheet → Testcase**. Checking a file checks all child sheets/testcases; checking a sheet checks its testcases. Unchecking individual cases updates the parent state. Existing **Select All / Deselect All** is retained.
+- Detects duplicate testcase names **across sheets and across files**, case-insensitively. **Build Log** reports the name and both Excel locations, and aborts the import. Duplicates are listed in the preview warning.
+- Both `Type = I` and `Type = O` values are range-checked **before conversion to the bus signal datatype**. Examples: `uint8` requires `0..255`, `int16` requires `-32768..32767`, `boolean` requires `0/1`; out-of-range values and noninteger values for integer signals abort Build Harness/Load Test Case and show testcase, signal and Excel row in Build Log. Base Workspace parameters are validated after resolving their values.
+- The import is **atomic** at testcase-batch level; if any selected testcase fails validation the batch does not complete. The tool has not been executed in MATLAB in this environment.
 
 ## v1.2.63 — Base Workspace parameters in Excel Value
 - Excel `Value` cells may contain a MATLAB Base Workspace variable name (e.g. `TargetSpeed`) instead of a numeric or Boolean literal.

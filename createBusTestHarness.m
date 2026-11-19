@@ -19,7 +19,7 @@ arguments
     existingHarness (1,1) string = ""
 end
 
-toolVersion = "1.2.63";
+toolVersion = "1.2.64";
 if model == ""
     [model, excelFile] = selectHarnessFiles(toolVersion);
     if model == ""
@@ -654,7 +654,9 @@ updates = updates([updates.Signal] == path);
 for k = 1:numel(updates)
     update = updates(k);
     try
-        sample(:) = excelValue(update.Value, sample);
+        requested = excelValue(update.Value, sample);
+        validateSignalValueRange(requested, sample);
+        sample(:) = requested;
     catch failure
         error('BusHarness:ExcelValue', 'Excel row %d: invalid Value for "%s". %s', ...
             update.Row, char(path), failure.message);
@@ -700,10 +702,12 @@ if isenum(sample)
         value = members(match);
         return
     end
-elseif islogical(sample) && any(strcmpi(text, ["true", "false", "0", "1"]))
-    value = strcmpi(text, "true") || text == "1";
+elseif islogical(sample) && any(strcmpi(text, ["true", "false"]))
+    value = strcmpi(text, "true");
     return
-elseif isfinite(number) && isreal(number) && ~islogical(sample)
+elseif isfinite(number) && isreal(number)
+    % Keep numeric literals uncast; validate the destination datatype before
+    % assignment. E.g. Boolean=2 and uint8=256 must fail, not saturate.
     value = number;
     return
 end
@@ -744,6 +748,50 @@ if numel(value) ~= 1 && numel(value) ~= numel(sample)
     error('BusHarness:ParameterSize', ...
         'Parameter "%s" contains %d values, but the signal expects %d.', ...
         char(text), numel(value), numel(sample));
+end
+end
+
+function validateSignalValueRange(value, sample)
+% Reject out-of-range BEFORE assignment (integer/fi casts may saturate).
+if isenum(sample)
+    if ~isa(value,class(sample))
+        error('BusHarness:ValueType','Value must belong to enum %s.',class(sample));
+    end
+    return
+end
+if isstring(sample) || ischar(sample), return; end
+if ~(isnumeric(value) || islogical(value)) || ...
+        ~isreal(value) || any(~isfinite(double(value(:))))
+    error('BusHarness:ValueType','Value must be finite real numeric data.');
+end
+v = double(value(:));
+if islogical(sample)
+    lo = 0; hi = 1;
+elseif isinteger(sample)
+    lo = double(intmin(class(sample)));
+    hi = double(intmax(class(sample)));
+elseif isa(sample,'embedded.fi')
+    lo = double(lowerbound(sample));
+    hi = double(upperbound(sample));
+elseif isa(sample,'single')
+    lo = -double(realmax('single')); hi = double(realmax('single'));
+elseif isa(sample,'double')
+    lo = -realmax('double'); hi = realmax('double');
+else
+    % Unknown custom numeric types: do not silently cast unchecked data.
+    error('BusHarness:ValueType', ...
+        'Unsupported signal datatype %s for range validation.',class(sample));
+end
+if any(v<lo | v>hi)
+    bad = v(find(v<lo | v>hi,1));
+    error('BusHarness:ValueRange', ...
+        'Value %.15g exceeds datatype %s range [%.15g, %.15g].', ...
+        bad,class(sample),lo,hi);
+end
+if (isinteger(sample) || isa(sample,'embedded.fi')) && ...
+        ~isa(sample,'embedded.fi') && any(v~=fix(v))
+    error('BusHarness:ValueRange', ...
+        'Datatype %s requires integer values; received %.15g.',class(sample),v(find(v~=fix(v),1)));
 end
 end
 

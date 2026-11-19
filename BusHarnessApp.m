@@ -17,6 +17,7 @@ modelPath = '';
 excelPaths = {};
 excelCases = struct('Name', {}, 'Rows', {}, 'DurationMs', {}, 'FirstRow', {}, 'LastRow', {});
 commonPaths = {};
+pendingCatalog = struct('Kind',{},'File',{},'Sheet',{},'Name',{});
 projectFile = '';
 project = emptyProject();
 app = uifigure('Name', 'Simulink Testing', ...
@@ -76,7 +77,7 @@ pendingSelectAll = uibutton(pendingToolbar, 'Text', 'Select All', 'Enable', 'off
 pendingList = uitable(pendingGrid, 'Data', emptyTestcaseTable(), ...
     'ColumnName', {'Import', 'Test Case'}, 'ColumnEditable', [true false], ...
     'ColumnWidth', {65, 'auto'}, 'RowName', {}, ...
-    'CellEditCallback', @(~, ~) refreshSelectAllButtons());
+    'CellEditCallback', @pendingSelectionChanged);
 
 results = uipanel(logSplit, 'Title', 'Build Log' , 'FontWeight', 'bold');
 resultsGrid = uigridlayout(results, [1 1], 'Padding', [10 6 10 10]);
@@ -588,16 +589,12 @@ updateProjectView();
 
     function readTestcaseNames()
         dataViewer.setExcelInputs(excelPaths,commonPaths);
-        % Listing Excel test cases must NOT resolve Func/common references.
-        % Those references are validated only when importing selected cases.
         previousRun = testcaseList.Data;
         selectedRun = previousRun.TestCase(previousRun.Selected);
         previousPending = pendingList.Data;
-        selectedPending = previousPending.TestCase(previousPending.Selected);
-        previouslySeen = previousPending.TestCase;
+        previousCatalog = pendingCatalog;
+        pendingCatalog = struct('Kind',{},'File',{},'Sheet',{},'Name',{});
         if isempty(excelPaths)
-            excelCases = struct('Name', {}, 'Rows', {}, 'DurationMs', {}, ...
-                'FirstRow', {}, 'LastRow', {});
             testcaseList.Data = emptyTestcaseTable();
             pendingList.Data = emptyTestcaseTable();
             testcaseCount.Text = 'Select an Excel file to import test cases.';
@@ -606,34 +603,109 @@ updateProjectView();
             return
         end
         try
-            names = readHarnessExcelNames(excelPaths);
-            % Lightweight preview intentionally does not expand functions.
-            excelCases = struct('Name', {}, 'Rows', {}, 'DurationMs', {}, ...
-                'FirstRow', {}, 'LastRow', {});
-            labels = harnessScenarioNames(names);
+            [names, entries] = readHarnessExcelNames(excelPaths);
             imported = importedScenarioNames();
-            alreadyLoaded = ismember(labels, imported);
-            current = names(alreadyLoaded);
+            alreadyLoaded = ismember(harnessScenarioNames(names), imported);
+            current = unique(names(alreadyLoaded),'stable');
             testcaseList.Data = table(ismember(current, selectedRun), current, ...
                 'VariableNames', {'Selected', 'TestCase'});
-            % Always list ALL Excel cases, including already imported ones.
-            % Preserve checkbox state on refresh; newly encountered cases
-            % are ticked by default, so they can be imported immediately.
-            checked = ~ismember(names, previouslySeen) | ismember(names, selectedPending);
-            pendingList.Data = table(checked, names, ...
-                'VariableNames', {'Selected', 'TestCase'});
+            visible = strings(0,1);
+            checked = false(0,1);
+            % Display a hierarchical list: File -> Sheet -> Testcase.
+            for file = reshape(string(excelPaths),1,[])
+                if ~any(string({entries.File}) == file), continue; end
+                [~,base,ext] = fileparts(file);
+                [visible,checked] = addPendingRow('File',file,"","", "[FILE] " + string(base)+string(ext), visible,checked,previousCatalog,previousPending);
+                sheets = unique(string({entries(string({entries.File}) == file).Sheet}),'stable');
+                for sheet = reshape(sheets,1,[])
+                    [visible,checked] = addPendingRow('Sheet',file,sheet,"", "    [SHEET] " + sheet, visible,checked,previousCatalog,previousPending);
+                    for entry = entries
+                        if entry.File ~= file || entry.Sheet ~= sheet, continue; end
+                        [visible,checked] = addPendingRow('Case',file,sheet,entry.Name, "        " + entry.Name, visible,checked,previousCatalog,previousPending);
+                    end
+                end
+            end
+            % Parents are checked iff all descendant cases are checked.
+            for j = numel(pendingCatalog):-1:1
+                if ~strcmp(pendingCatalog(j).Kind,'Case')
+                    children = childIndexes(j);
+                    checked(j) = ~isempty(children) && all(checked(children));
+                end
+            end
+            pendingList.Data = table(checked, visible, ...
+                'VariableNames',{'Selected','TestCase'});
             testcaseCount.Text = sprintf('%d imported test case(s)', numel(current));
-            pendingCount.Text = sprintf('%d Excel test cases (%d in Signal Editor). Tick cases to create/update.', ...
-                numel(names), nnz(alreadyLoaded));
+            duplicateNames = unique(names(arrayfun(@(j) nnz(strcmpi(names,names(j)))>1, 1:numel(names))));
+            if isempty(duplicateNames)
+                pendingCount.Text = sprintf('%d Excel test cases in %d workbook(s); select file/sheet/case.', ...
+                    numel(names), numel(excelPaths));
+            else
+                pendingCount.Text = sprintf('%d cases; DUPLICATE names: %s. Build Log will show details.', ...
+                    numel(names), char(strjoin(duplicateNames,', ')));
+            end
             refreshSelectAllButtons();
         catch failure
-            testcaseList.Data = emptyTestcaseTable();
             pendingList.Data = emptyTestcaseTable();
-            testcaseCount.Text = 'Could not read Excel testcase names.';
-            pendingCount.Text = 'Could not preview Excel test cases.';
+            testcaseList.Data = emptyTestcaseTable();
+            pendingCount.Text = ['Excel preview failed: ' failure.message];
+            testcaseCount.Text = 'Could not preview Excel test cases.';
             refreshSelectAllButtons();
-            % The selection preview is independent of build log.
         end
+
+    end
+
+    function [visible,checked] = addPendingRow(kind,file,sheet,name,label, ...
+            visible,checked,previousCatalog,previousPending)
+        idx = numel(pendingCatalog)+1;
+        pendingCatalog(idx) = struct('Kind',kind,'File',file, ...
+            'Sheet',sheet,'Name',name);
+        visible(end+1,1) = label;
+        checked(end+1,1) = true;
+        if ~strcmp(kind,'Case'), return; end
+        for old = 1:numel(previousCatalog)
+            if strcmp(previousCatalog(old).Kind,'Case') && ...
+                    previousCatalog(old).File == file && ...
+                    previousCatalog(old).Sheet == sheet && ...
+                    previousCatalog(old).Name == name && ...
+                    old <= height(previousPending)
+                checked(idx) = previousPending.Selected(old);
+                break
+            end
+        end
+    end
+
+    function ids = childIndexes(index)
+        ids = zeros(0,1);
+        if isempty(pendingCatalog) || index > numel(pendingCatalog), return; end
+        parent = pendingCatalog(index);
+        for j = 1:numel(pendingCatalog)
+            x = pendingCatalog(j);
+            if ~strcmp(x.Kind,'Case') || x.File ~= parent.File, continue; end
+            if strcmp(parent.Kind,'File') || ...
+                    (strcmp(parent.Kind,'Sheet') && x.Sheet == parent.Sheet)
+                ids(end+1,1) = j; %#ok<AGROW>
+            end
+        end
+    end
+
+    function pendingSelectionChanged(~,event)
+        if busy, return; end
+        rows = pendingList.Data;
+        if isempty(rows) || isempty(event.Indices), return; end
+        idx = event.Indices(1);
+        if idx > numel(pendingCatalog), return; end
+        if ~strcmp(pendingCatalog(idx).Kind,'Case')
+            children = childIndexes(idx);
+            rows.Selected(children) = logical(event.NewData);
+        end
+        for j = numel(pendingCatalog):-1:1
+            if ~strcmp(pendingCatalog(j).Kind,'Case')
+                children = childIndexes(j);
+                rows.Selected(j) = ~isempty(children) && all(rows.Selected(children));
+            end
+        end
+        pendingList.Data = rows;
+        refreshSelectAllButtons();
     end
 
     function toggleAllCases(whichList)
@@ -694,7 +766,10 @@ updateProjectView();
         selected = strings(0,1);
         try
             rows = pendingList.Data;
-            selected = string(rows.TestCase(rows.Selected));
+            if numel(pendingCatalog) == height(rows)
+                mask = rows.Selected & strcmp({pendingCatalog.Kind}', 'Case');
+                selected = string({pendingCatalog(mask).Name})';
+            end
         catch
         end
         total = numel(selected);
@@ -742,12 +817,9 @@ updateProjectView();
                     'The Excel testcase list has changed. Refresh the selection.');
             end
             mergedPaths = strings(0,1);
-            cursor = 0;
             for k = 1:numel(merged)
-                sourceCases = readHarnessExcel(excel(k), commonPaths);
-                n = numel(sourceCases);
-                chosenHere = ismember(allNames(cursor+(1:n)), selected);
-                cursor = cursor + n;
+                sourceCases = merged(k).Cases;
+                chosenHere = ismember(string({sourceCases.Name}), selected);
                 if ~any(chosenHere)
                     continue
                 end
@@ -1628,7 +1700,8 @@ end
 
 function file = writeMergedWorkbook(workbook, folder)
 [~, name] = fileparts(char(workbook.Source));
-base = [name '_Merged'];
+sheetName = regexprep(char(workbook.Sheet),'[^a-zA-Z0-9_-]','_');
+base = [name '_' sheetName '_Merged'];
 file = fullfile(folder, [base '.xlsx']);
 index = 1;
 while isfile(file) || isfolder(file)

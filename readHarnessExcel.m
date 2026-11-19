@@ -1,31 +1,61 @@
-function [cases, merged] = readHarnessExcel(files, commonFiles)
-if nargin < 2
-    commonFiles = {};
-end
+function [cases, merged] = readHarnessExcel(files, commonFiles, selectedSheets)
+%READHARNESSEXCEL Read ALL testcase sheets and identify duplicate names.
+% selectedSheets is optional; entries are <full-file-path> + newline + <sheet>.
+if nargin < 2, commonFiles = {}; end
+if nargin < 3, selectedSheets = strings(0,1); end
+selectedSheets = string(selectedSheets(:));
 commonFiles = reshape(string(commonFiles), 1, []);
 commonFiles = commonFiles(commonFiles ~= "");
 functions = readCommonFunctions(commonFiles);
 cases = struct('Name', {}, 'Rows', {}, 'DurationMs', {}, 'FirstRow', {}, 'LastRow', {});
-merged = struct('Source', {}, 'Cells', {});
+merged = struct('Source', {}, 'Sheet', {}, 'Cells', {}, 'Cases', {});
+locations = strings(0,1);
 for file = reshape(string(files), 1, [])
-    if file == ""
-        continue
-    end
+    if file == "", continue; end
+    found = false;
     try
-        cells = readcell(file, 'Sheet', 1, 'Range', 'A1');
-        columns = workbookColumns(cells, "testcase_name");
-        cells = expandFunctions(cells, columns, functions, commonFiles);
-        imported = readRows(cells, columns);
-        duplicates = intersect(string({cases.Name}), string({imported.Name}), 'stable');
-        if ~isempty(duplicates)
-            error('BusHarness:ExcelTestcase', 'Duplicate testcase name: %s.', char(strjoin(duplicates, ', ')));
-        end
-        cases = [cases, imported]; %#ok<AGROW>
-        if nargout > 1
-            merged(end+1) = struct('Source', file, 'Cells', {cells}); %#ok<AGROW>
-        end
+        sheets = reshape(string(sheetnames(file)),1,[]);
     catch failure
         error('BusHarness:ExcelImport', 'Excel file "%s": %s', char(file), failure.message);
+    end
+    for sheet = sheets
+        if ~isempty(selectedSheets) && ~any(selectedSheets == file + newline + sheet)
+            continue
+        end
+        try
+            cells = readcell(file, 'Sheet', char(sheet), 'Range', 'A1');
+            if isempty(cells) || ~any(normalizedHeaders(cells) == "testcase_name")
+                % Other workbook sheets may contain documentation or metadata.
+                continue
+            end
+            found = true;
+            columns = workbookColumns(cells, "testcase_name");
+            cells = expandFunctions(cells, columns, functions, commonFiles);
+            imported = readRows(cells, columns);
+            for j = 1:numel(imported)
+                name = string(imported(j).Name);
+                previous = find(strcmpi(string({cases.Name}),name),1);
+                if ~isempty(previous)
+                    error('BusHarness:DuplicateTestcase', ...
+                        'Duplicate testcase "%s": %s and %s (row %d). Rename one testcase.', ...
+                        char(name), char(locations(previous)), ...
+                        char(file + " / " + sheet), imported(j).FirstRow);
+                end
+                locations(end+1,1) = file + " / " + sheet; %#ok<AGROW>
+            end
+            cases = [cases, imported]; %#ok<AGROW>
+            if nargout > 1
+                merged(end+1) = struct('Source',file,'Sheet',sheet, ...
+                    'Cells',{cells},'Cases',{imported}); %#ok<AGROW>
+            end
+        catch failure
+            error('BusHarness:ExcelImport', 'Excel file "%s", sheet "%s": %s', ...
+                char(file), char(sheet), failure.message);
+        end
+    end
+    if ~found && isempty(selectedSheets)
+        error('BusHarness:ExcelImport', ...
+            'Excel file "%s" has no sheet with a testcase_name header.', char(file));
     end
 end
 end

@@ -22,7 +22,8 @@ catch
 end
 for file = reshape(string(files),1,[])
     if file == "" || ~isfile(file), continue; end
-    cells = readcell(file,'Sheet',1,'Range','A1');
+    for sheet = reshape(string(sheetnames(file)),1,[])
+    cells = readcell(file,'Sheet',char(sheet),'Range','A1');
     if isempty(cells), continue; end
     headers = strings(1,size(cells,2));
     for c=1:size(cells,2)
@@ -49,6 +50,7 @@ for file = reshape(string(files),1,[])
             catalog(active).Signals(end+1,1)=bus+"."+signal;
         end
     end
+    end % sheet
 end
 for k=1:numel(catalog)
     catalog(k).Signals=unique(catalog(k).Signals,'stable');
