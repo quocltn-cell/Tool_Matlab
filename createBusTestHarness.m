@@ -19,7 +19,7 @@ arguments
     existingHarness (1,1) string = ""
 end
 
-toolVersion = "1.2.52";
+toolVersion = "1.2.63";
 if model == ""
     [model, excelFile] = selectHarnessFiles(toolVersion);
     if model == ""
@@ -527,7 +527,12 @@ for c = 1:numel(cases)
         for n = 1:numel(updates)
             updates(n).Signal = validateExcelSignal(updates(n), ground{k});
         end
-        values = busTimeseries(ground{k}, buses{k}, designData, allPorts(k).Block, time, updates, "");
+        try
+            values = busTimeseries(ground{k}, buses{k}, designData, allPorts(k).Block, time, updates, "");
+        catch failure
+            error('BusHarness:TestcaseValue', 'Testcase "%s": %s', ...
+                char(cases(c).Name), failure.message);
+        end
         scenario = addElement(scenario, values, editorNames{k});
     end
     scenarioData.(char(labels(c))) = scenario;
@@ -666,30 +671,103 @@ end
 end
 
 function value = excelValue(raw, sample)
+%EXCELVALUE Accept literals and named variables from MATLAB Base Workspace.
+% Read only single identifiers; never eval arbitrary Excel expressions.
+text = string(excelText(raw));
 if isstring(sample)
+    % Preserve existing string-valued bus elements; resolve an existing
+    % base-workspace string parameter when the user supplies its name.
     value = string(raw);
+    if isvarname(char(text)) && evalin('base', sprintf('exist(''%s'',''var'')', char(text))) == 1
+        value = resolveBaseValue(text);
+        if ~(ischar(value) || isstring(value))
+            error('BusHarness:ParameterType', ...
+                'Parameter "%s" must contain text for a string signal.', char(text));
+        end
+        value = string(value);
+    end
     return
 end
-text = string(excelText(raw));
-value = str2double(text);
+number = str2double(text);
 if isenum(sample)
-    if isfinite(value) && isreal(value)
-        value = feval(class(sample), value);
-    else
-        [members, names] = enumeration(class(sample));
-        match = find(strcmp(names, text));
-        if numel(match) ~= 1
-            error('BusHarness:ExcelEnum', 'Expected an enumeration member name or numeric value.');
-        end
+    if isfinite(number) && isreal(number)
+        value = feval(class(sample), number);
+        return
+    end
+    [members, names] = enumeration(class(sample));
+    match = find(strcmp(names, text));
+    if numel(match) == 1
         value = members(match);
+        return
     end
 elseif islogical(sample) && any(strcmpi(text, ["true", "false", "0", "1"]))
     value = strcmpi(text, "true") || text == "1";
-elseif ~isfinite(value) || ~isreal(value) || islogical(sample)
-    error('BusHarness:ExcelNumber', 'Expected a finite real number or a Boolean for a logical element.');
+    return
+elseif isfinite(number) && isreal(number) && ~islogical(sample)
+    value = number;
+    return
+end
+% For anything not recognized as a literal/enum member, interpret the
+% Excel cell as a parameter NAME, not a MATLAB expression.
+if ~isvarname(char(text))
+    error('BusHarness:ExcelValueLiteral', ...
+        'Value "%s" is neither a valid literal nor a Base Workspace parameter name.', char(text));
+end
+value = resolveBaseValue(text);
+if isenum(sample)
+    if isa(value, class(sample))
+        % Already the correct enumeration type.
+    elseif isnumeric(value) && isscalar(value) && isfinite(value) && isreal(value)
+        value = feval(class(sample), double(value));
+    else
+        error('BusHarness:ParameterType', ...
+            'Parameter "%s" must contain a compatible enum member or numeric value.', char(text));
+    end
+elseif islogical(sample)
+    if ~(isnumeric(value) || islogical(value)) || ~isreal(value) || ...
+            any(~isfinite(double(value(:)))) || any(~ismember(double(value(:)), [0, 1]))
+        error('BusHarness:ParameterType', ...
+            'Parameter "%s" must contain Boolean values (0 or 1).', char(text));
+    end
+    value = logical(value);
+else
+    if ~isnumeric(value) && ~islogical(value)
+        error('BusHarness:ParameterType', ...
+            'Parameter "%s" must contain numeric values for this signal.', char(text));
+    end
+    if ~isreal(value) || any(~isfinite(double(value(:))))
+        error('BusHarness:ParameterType', ...
+            'Parameter "%s" must contain finite real values.', char(text));
+    end
+end
+if numel(value) ~= 1 && numel(value) ~= numel(sample)
+    error('BusHarness:ParameterSize', ...
+        'Parameter "%s" contains %d values, but the signal expects %d.', ...
+        char(text), numel(value), numel(sample));
 end
 end
 
+function value = resolveBaseValue(name)
+% Resolve only MATLAB variable names to prevent evaluating Excel formulas.
+identifier = char(name);
+if evalin('base', sprintf('exist(''%s'',''var'')', identifier)) ~= 1
+    error('BusHarness:MissingParameter', ...
+        'Parameter "%s" does not exist in MATLAB Base Workspace.', identifier);
+end
+try
+    value = evalin('base', identifier);
+    if isa(value, 'Simulink.Parameter')
+        value = value.Value;
+    end
+catch failure
+    error('BusHarness:ParameterRead', ...
+        'Cannot read parameter "%s" from Base Workspace: %s', identifier, failure.message);
+end
+if isempty(value)
+    error('BusHarness:ParameterEmpty', ...
+        'Parameter "%s" is empty in MATLAB Base Workspace.', identifier);
+end
+end
 
 function sourceY = connectRunnables(harness, modelInports, inputs, runnablePorts, sourceY)
 % Normalize a scalar period and [period 0] to the same schedule.

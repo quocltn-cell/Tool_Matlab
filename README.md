@@ -1,4 +1,11 @@
-# Simulink Testing v1.2.62
+# Simulink Testing v1.2.63
+
+## v1.2.63 — Base Workspace parameters in Excel Value
+- Excel `Value` cells may contain a MATLAB Base Workspace variable name (e.g. `TargetSpeed`) instead of a numeric or Boolean literal.
+- Supported variables include plain numeric/logical/enum values and `Simulink.Parameter` objects (using their `.Value`). Existing numeric, Boolean and enum-member literals still work.
+- The tool resolves values when creating or reloading Signal Editor testcases (including workbooks assembled from common functions); Excel expressions are **not** executed.
+- If a variable is missing, empty, non-numeric where numeric is required, or has an incompatible dimension, Build Log shows the testcase, Excel row, signal path and parameter name. Import is aborted without reporting false success.
+- Static/source validation only; actual Base Workspace behavior must be verified in MATLAB.
 
 ## v1.2.62 — Generate Test Manager reports
 - A **Gen Report** button appears in Run Test only after the current project has completed a Run Test with available iteration results.
