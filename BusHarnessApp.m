@@ -811,6 +811,12 @@ updateProjectView();
         drawnow;
         stage = 'reading Signal Editor scenarios';
         testFile = '';
+        tempFolder = '';
+        backupFolder = '';
+        originalFiles = {};
+        movedFiles = {};
+        finalFile = '';
+        installed = false;
         try
             [harness, model, active, scenarios] = testHarnessScenarios(savedHarnessFile());
             scenarios = strtrim(string(scenarios(:)));
@@ -837,8 +843,30 @@ updateProjectView();
             if ~isfolder(folder)
                 makeFolder(folder);
             end
-            testFile = nextTestFile(folder, [model '_Tests']);
-            stage = 'creating Test Manager file';
+            finalFile = fullfile(folder, [model '_Tests.mldatx']);
+            existing = dir(fullfile(folder, '*.mldatx'));
+            existing = existing(~[existing.isdir]);
+            originalFiles = fullfile(folder, {existing.name});
+            if ~isempty(originalFiles)
+                choice = uiconfirm(app, ...
+                    sprintf(['This project already has %d Test Manager file(s).\n' ...
+                    'Replace with %s?'], numel(originalFiles), [model '_Tests.mldatx']), ...
+                    'Replace Test Manager File', ...
+                    'Options', {'Replace', 'Cancel'}, ...
+                    'DefaultOption', 2, 'CancelOption', 2, 'Icon', 'warning');
+                if ~strcmp(choice, 'Replace')
+                    testMessages.Value = {'Build Test Cancelled'; ...
+                        'Existing Test Manager file was not changed.'};
+                    return
+                end
+            end
+            tempFolder = tempname;
+            [ok, msg] = mkdir(tempFolder);
+            if ~ok
+                error('BusHarnessApp:TempBuildFolder', '%s', msg);
+            end
+            testFile = fullfile(tempFolder, [model '_Tests.mldatx']);
+            stage = 'creating temporary Test Manager file';
             % TestFile automatically creates a default suite and case.
             % Remove these BEFORE adding our names. If a previous build
             % produced an unsaved entry, use a distinct new output file.
@@ -862,23 +890,84 @@ updateProjectView();
                 setTestParam(iteration, 'SignalEditorScenario', char(scenario));
                 addIteration(tc, iteration, char(scenario));
             end
-            stage = 'saving Test Manager file';
+            stage = 'saving temporary Test Manager file';
             saveToFile(tf);
-            [~, stem, extension] = fileparts(testFile);
+            close(tf);
+            if ~isfile(testFile)
+                error('BusHarnessApp:TempFile', 'Temporary Test Manager file was not saved.');
+            end
+            stage = 'replacing project Test Manager file';
+            backupFolder = tempname;
+            [ok, msg] = mkdir(backupFolder);
+            if ~ok
+                error('BusHarnessApp:BackupFolder', '%s', msg);
+            end
+            for j = 1:numel(originalFiles)
+                previous = sltest.testmanager.TestFile(originalFiles{j});
+                close(previous);
+            end
+            for j = 1:numel(originalFiles)
+                [~, name, ext] = fileparts(originalFiles{j});
+                backup = fullfile(backupFolder, [name ext]);
+                [ok, msg] = movefile(originalFiles{j}, backup);
+                if ~ok
+                    error('BusHarnessApp:BackupTestFile', '%s', msg);
+                end
+                movedFiles{end+1} = backup; %#ok<AGROW>
+            end
+            [ok, msg] = movefile(testFile, finalFile);
+            if ~ok
+                error('BusHarnessApp:InstallTestFile', '%s', msg);
+            end
+            installed = true;
+            stage = 'saving project Test Manager path';
             data = project;
-            data.TestManagerFile = ['output/' stem extension];
+            data.TestManagerFile = ['output/' model '_Tests.mldatx'];
             writeProject(projectFile, data);
             project = data;
+            if ~isempty(backupFolder) && isfolder(backupFolder)
+                try
+                    rmdir(backupFolder, 's');
+                    backupFolder = '';
+                catch
+                end
+            end
             testMessages.Value = { ...
                 'Build Test Successful'; ...
                 sprintf('Test iterations created: %d', numel(scenarios))};
         catch failure
-            % The stage is important: Test Manager uses the same error
-            % message for duplicate suites, cases and iterations.
-            testMessages.Value = { ...
-                'Build Test Failed'; ...
-                ['Step: ' stage]; ...
-                ['Error: ' failure.message]};
+            % Restore the previous project-owned .mldatx files on failure.
+            restoreErrors = {};
+            if installed && isfile(finalFile)
+                try
+                    delete(finalFile);
+                catch rollbackError
+                    restoreErrors{end+1} = rollbackError.message; %#ok<AGROW>
+                end
+            end
+            for j = 1:numel(movedFiles)
+                if isfile(movedFiles{j})
+                    [ok, msg] = movefile(movedFiles{j}, originalFiles{j});
+                    if ~ok
+                        restoreErrors{end+1} = msg; %#ok<AGROW>
+                    end
+                end
+            end
+            if ~isempty(backupFolder) && isfolder(backupFolder) && isempty(restoreErrors)
+                rmdir(backupFolder, 's');
+            end
+            lines = {'Build Test Failed'; ['Step: ' stage]; ['Error: ' failure.message]};
+            if ~isempty(restoreErrors)
+                lines{end+1} = ['Restore warning: ' strjoin(restoreErrors, '; ')];
+                lines{end+1} = ['Backup folder: ' backupFolder];
+            end
+            testMessages.Value = lines;
+        end
+        if ~isempty(tempFolder) && isfolder(tempFolder)
+            try
+                rmdir(tempFolder, 's');
+            catch
+            end
         end
     end
 
@@ -1368,15 +1457,6 @@ datasets = strcmp({variables.class}, 'Simulink.SimulationData.Dataset');
 scenarios = reshape(string({variables(datasets).name}), [], 1);
 if isempty(scenarios) || ~any(scenarios == string(active))
     error('BusHarnessApp:TestScenarios', 'The Signal Editor has no valid active scenario.');
-end
-end
-
-function file = nextTestFile(folder, base)
-file = fullfile(folder, [base '.mldatx']);
-index = 1;
-while isfile(file) || isfolder(file)
-    index = index + 1;
-    file = fullfile(folder, sprintf('%s_%d.mldatx', base, index));
 end
 end
 

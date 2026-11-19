@@ -1,4 +1,11 @@
-# Simulink Testing v1.2.60
+# Simulink Testing v1.2.61
+
+## v1.2.61 — One MLDATX per project
+- Build Test produces only `output/<Model>_Tests.mldatx` and does not create `_2`, `_3` copies.
+- When files already exist in the project's output folder, ask **Replace / Cancel** (Cancel is default).
+- Build first in a temporary directory, back up old test files, and install the new file only when build succeeds.
+- Restore previous test files if installation or project metadata update fails.
+- Preserve unrelated project files. MATLAB runtime verification is still required.
 
 ## v1.2.60 — Colored Output testcase statuses
 - Remove the redundant PASS CASES / FAIL CASES list from Data → Output.
