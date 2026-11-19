@@ -1,11 +1,21 @@
-# Simulink Testing v1.2.61
+# Simulink Testing v1.2.62
 
-## v1.2.61 — One MLDATX per project
-- Build Test produces only `output/<Model>_Tests.mldatx` and does not create `_2`, `_3` copies.
-- When files already exist in the project's output folder, ask **Replace / Cancel** (Cancel is default).
-- Build first in a temporary directory, back up old test files, and install the new file only when build succeeds.
-- Restore previous test files if installation or project metadata update fails.
-- Preserve unrelated project files. MATLAB runtime verification is still required.
+## v1.2.62 — Generate Test Manager reports
+- A **Gen Report** button appears in Run Test only after the current project has completed a Run Test with available iteration results.
+- The button opens a report options dialog (PDF, DOCX or ZIP; include all/pass/fail; title, author, plots, errors, coverage and launch setting), then calls the supported `sltest.testmanager.report()` API.
+- Reports are saved to `<project>/output/<project>_TestReport.<extension>`, with a replacement confirmation for existing reports. A separate **Open Test Manager** button gives access to the native Test Manager interface.
+- MATLAB does not document a public API for opening the native Test Manager report-options dialog directly; the tool supplies its own options dialog rather than using unsupported internal APIs.
+- The report action is reset on new/open/close project, Build Test replacement and before each Run Test. Existing build, running, Data tabs and report generation are otherwise independent.
+- **Validation:** ZIP integrity, source assertions and static checks only. Real MATLAB/Simulink GUI execution remains to be verified.
+
+## v1.2.61 — One Test Manager file per project
+- Build Test writes only `output/<Model>_Tests.mldatx`; no numbered `_2`/`_3` versions.
+- When any `.mldatx` exists in the project's `output` folder, display **Replace / Cancel** (Cancel is the default).
+- Cancel preserves existing file(s) and the project link unchanged.
+- Build the new test file in a temporary directory, then replace the project-owned `.mldatx` file(s). Backups are restored if install or project-save fails.
+- On successful replacement, retain exactly one `.mldatx` in `output` and update the project's `TestManagerFile` reference.
+- Other Test Manager files loaded in MATLAB are not cleared. No harness or scenario modification.
+- Not runtime-tested in MATLAB/Simulink; test with a backup of the project.
 
 ## v1.2.60 — Colored Output testcase statuses
 - Remove the redundant PASS CASES / FAIL CASES list from Data → Output.

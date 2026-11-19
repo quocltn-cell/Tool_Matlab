@@ -10,6 +10,8 @@ paper = [0.96 0.97 0.99];
 muted = [0.30 0.36 0.45];
 lastInfo = [];
 busy = false;
+% The latest Test Manager result is valid only for this open project/run.
+reportResult = [];
 projectRoot = '';
 modelPath = '';
 excelPaths = {};
@@ -114,8 +116,8 @@ openWelcome.Layout.Column = 4;
 testLayout = uigridlayout(testTab, [3 2], ...
     'RowHeight', {30, '1x', '1x'}, 'ColumnWidth', {'3x', '2x'}, ...
     'Padding', [12 12 12 12], 'RowSpacing', 10, 'BackgroundColor', paper);
-testActions = uigridlayout(testLayout, [1 3], ...
-    'ColumnWidth', {94, 94, '1x'}, 'Padding', [0 0 0 0]);
+testActions = uigridlayout(testLayout, [1 4], ...
+    'ColumnWidth', {94, 94, 0, '1x'}, 'Padding', [0 0 0 0]);
 testActions.Layout.Row = 1;
 testActions.Layout.Column = [1 2];
 runTestButton = uibutton(testActions, 'Text', 'Run Test', 'Enable', 'off', ...
@@ -123,6 +125,10 @@ runTestButton = uibutton(testActions, 'Text', 'Run Test', 'Enable', 'off', ...
     'ButtonPushedFcn', @runSelectedTests);
 buildTestButton = uibutton(testActions, 'Text', 'Build Test', 'Enable', 'off', ...
     'ButtonPushedFcn', @buildTest);
+% Hidden until the first completed Run Test in the current project.
+genReportButton = uibutton(testActions, 'Text', 'Gen Report', 'Visible', 'off', ...
+    'Enable', 'off', 'ButtonPushedFcn', @openReportDialog, ...
+    'Tooltip', 'Configure and export the latest Test Manager results to project/output');
 testcases = uipanel(testLayout, 'Title', 'Imported Test Cases', 'FontWeight', 'bold');
 testcases.Layout.Row = [2 3];
 testcases.Layout.Column = 1;
@@ -373,6 +379,7 @@ updateProjectView();
         projectFile = file;
         project = data;
         lastInfo = [];
+        reportResult = [];
         testcaseList.Data = emptyTestcaseTable();
         pendingList.Data = emptyTestcaseTable();
         testMessages.Value = {''};
@@ -807,16 +814,13 @@ updateProjectView();
         end
         setBusy(true);
         cleanup = onCleanup(@() setBusy(false)); %#ok<NASGU>
-        testMessages.Value = {'Building Test Manager file...'};
-        drawnow;
         stage = 'reading Signal Editor scenarios';
-        testFile = '';
         tempFolder = '';
         backupFolder = '';
         originalFiles = {};
-        movedFiles = {};
-        finalFile = '';
-        installed = false;
+        backupFiles = {};
+        destination = '';
+        newInstalled = false;
         try
             [harness, model, active, scenarios] = testHarnessScenarios(savedHarnessFile());
             scenarios = strtrim(string(scenarios(:)));
@@ -824,10 +828,8 @@ updateProjectView();
                 error('BusHarnessApp:EmptyTestName', ...
                     'Signal Editor contains an empty scenario name.');
             end
-            % Compare using case-insensitive trimmed names, but preserve the
-            % original names when configuring Signal Editor iterations.
             keys = lower(scenarios);
-            [uniqueKeys, ~, group] = unique(keys, 'stable'); %#ok<ASGLU>
+            [~, ~, group] = unique(keys, 'stable');
             counts = accumarray(group, 1);
             duplicateNames = scenarios(ismember(group, find(counts > 1)));
             if ~isempty(duplicateNames)
@@ -843,14 +845,17 @@ updateProjectView();
             if ~isfolder(folder)
                 makeFolder(folder);
             end
-            finalFile = fullfile(folder, [model '_Tests.mldatx']);
+            destination = fullfile(folder, [model '_Tests.mldatx']);
+            % A project owns one MLDATX in output, never a numbered copy.
             existing = dir(fullfile(folder, '*.mldatx'));
             existing = existing(~[existing.isdir]);
             originalFiles = fullfile(folder, {existing.name});
             if ~isempty(originalFiles)
                 choice = uiconfirm(app, ...
-                    sprintf(['This project already has %d Test Manager file(s).\n' ...
-                    'Replace with %s?'], numel(originalFiles), [model '_Tests.mldatx']), ...
+                    sprintf(['This project already contains %d Test Manager file(s).\n' ...
+                    'Build Test will replace them with one file:\n%s\n\n' ...
+                    'Replace the existing test file(s)?'], ...
+                    numel(originalFiles), [model '_Tests.mldatx']), ...
                     'Replace Test Manager File', ...
                     'Options', {'Replace', 'Cancel'}, ...
                     'DefaultOption', 2, 'CancelOption', 2, 'Icon', 'warning');
@@ -860,17 +865,19 @@ updateProjectView();
                     return
                 end
             end
+            testMessages.Value = {'Building Test Manager file...'};
+            drawnow;
+            % Build outside the project so a failed build cannot damage the
+            % existing MLDATX and output/ never accumulates _2/_3 copies.
             tempFolder = tempname;
-            [ok, msg] = mkdir(tempFolder);
+            [ok, message] = mkdir(tempFolder);
             if ~ok
-                error('BusHarnessApp:TempBuildFolder', '%s', msg);
+                error('BusHarnessApp:TemporaryFolder', ...
+                    'Cannot create a temporary Build Test folder: %s', message);
             end
-            testFile = fullfile(tempFolder, [model '_Tests.mldatx']);
+            temporaryFile = fullfile(tempFolder, [model '_Tests.mldatx']);
             stage = 'creating temporary Test Manager file';
-            % TestFile automatically creates a default suite and case.
-            % Remove these BEFORE adding our names. If a previous build
-            % produced an unsaved entry, use a distinct new output file.
-            tf = sltest.testmanager.TestFile(testFile);
+            tf = sltest.testmanager.TestFile(temporaryFile);
             stage = 'removing default Test Manager suite';
             initialSuites = getTestSuites(tf);
             for k = numel(initialSuites):-1:1
@@ -892,40 +899,55 @@ updateProjectView();
             end
             stage = 'saving temporary Test Manager file';
             saveToFile(tf);
+            % Close the temporary Test Manager handle after saving. This
+            % prevents MATLAB from keeping the temporary pathname active.
             close(tf);
-            if ~isfile(testFile)
-                error('BusHarnessApp:TempFile', 'Temporary Test Manager file was not saved.');
+            if ~isfile(temporaryFile)
+                error('BusHarnessApp:MissingTestFile', ...
+                    'The temporary Test Manager file was not saved.');
             end
-            stage = 'replacing project Test Manager file';
+            stage = 'replacing existing Test Manager file';
             backupFolder = tempname;
-            [ok, msg] = mkdir(backupFolder);
+            [ok, message] = mkdir(backupFolder);
             if ~ok
-                error('BusHarnessApp:BackupFolder', '%s', msg);
+                error('BusHarnessApp:BackupFolder', ...
+                    'Cannot create the backup folder: %s', message);
             end
-            for j = 1:numel(originalFiles)
-                previous = sltest.testmanager.TestFile(originalFiles{j});
-                close(previous);
+            % Close only the project-owned Test Manager files. Do not clear
+            % unrelated Test Manager files from the MATLAB session.
+            for k = 1:numel(originalFiles)
+                oldTest = sltest.testmanager.TestFile(originalFiles{k});
+                close(oldTest);
             end
-            for j = 1:numel(originalFiles)
-                [~, name, ext] = fileparts(originalFiles{j});
+            for k = 1:numel(originalFiles)
+                [~, name, ext] = fileparts(originalFiles{k});
                 backup = fullfile(backupFolder, [name ext]);
-                [ok, msg] = movefile(originalFiles{j}, backup);
+                [ok, message] = movefile(originalFiles{k}, backup);
                 if ~ok
-                    error('BusHarnessApp:BackupTestFile', '%s', msg);
+                    error('BusHarnessApp:BackupTestFile', ...
+                        'Cannot back up %s: %s', originalFiles{k}, message);
                 end
-                movedFiles{end+1} = backup; %#ok<AGROW>
+                backupFiles{end+1} = backup; %#ok<AGROW>
             end
-            [ok, msg] = movefile(testFile, finalFile);
+            [ok, message] = movefile(temporaryFile, destination);
             if ~ok
-                error('BusHarnessApp:InstallTestFile', '%s', msg);
+                error('BusHarnessApp:InstallTestFile', ...
+                    'Cannot install the new Test Manager file: %s', message);
             end
-            installed = true;
+            newInstalled = true;
             stage = 'saving project Test Manager path';
             data = project;
             data.TestManagerFile = ['output/' model '_Tests.mldatx'];
             writeProject(projectFile, data);
             project = data;
-            if ~isempty(backupFolder) && isfolder(backupFolder)
+            % The previous test results belong to the replaced MLDATX.
+            reportResult = [];
+            updateReportButton();
+            % Old test files are deleted only after both build and project
+            % metadata update succeed. Everything else is left untouched.
+            if isfolder(backupFolder)
+                % Backup cleanup is best effort: a successful project save
+                % must not be rolled back because a temp folder is locked.
                 try
                     rmdir(backupFolder, 's');
                     backupFolder = '';
@@ -936,29 +958,30 @@ updateProjectView();
                 'Build Test Successful'; ...
                 sprintf('Test iterations created: %d', numel(scenarios))};
         catch failure
-            % Restore the previous project-owned .mldatx files on failure.
-            restoreErrors = {};
-            if installed && isfile(finalFile)
+            % Restore the exact previous MLDATX files if replacement or
+            % project-metadata saving fails. Do not silently lose backups.
+            restorationErrors = {};
+            if newInstalled && isfile(destination)
                 try
-                    delete(finalFile);
+                    delete(destination);
                 catch rollbackError
-                    restoreErrors{end+1} = rollbackError.message; %#ok<AGROW>
+                    restorationErrors{end+1} = rollbackError.message; %#ok<AGROW>
                 end
             end
-            for j = 1:numel(movedFiles)
-                if isfile(movedFiles{j})
-                    [ok, msg] = movefile(movedFiles{j}, originalFiles{j});
+            for k = 1:numel(backupFiles)
+                if isfile(backupFiles{k})
+                    [ok, message] = movefile(backupFiles{k}, originalFiles{k});
                     if ~ok
-                        restoreErrors{end+1} = msg; %#ok<AGROW>
+                        restorationErrors{end+1} = message; %#ok<AGROW>
                     end
                 end
             end
-            if ~isempty(backupFolder) && isfolder(backupFolder) && isempty(restoreErrors)
+            if ~isempty(backupFolder) && isfolder(backupFolder) && isempty(restorationErrors)
                 rmdir(backupFolder, 's');
             end
             lines = {'Build Test Failed'; ['Step: ' stage]; ['Error: ' failure.message]};
-            if ~isempty(restoreErrors)
-                lines{end+1} = ['Restore warning: ' strjoin(restoreErrors, '; ')];
+            if ~isempty(restorationErrors)
+                lines{end+1} = ['Restore warning: ' strjoin(restorationErrors, '; ')];
                 lines{end+1} = ['Backup folder: ' backupFolder];
             end
             testMessages.Value = lines;
@@ -967,6 +990,7 @@ updateProjectView();
             try
                 rmdir(tempFolder, 's');
             catch
+                % Do not change the Build Test result because of temp cleanup.
             end
         end
     end
@@ -982,6 +1006,8 @@ updateProjectView();
         end
         setBusy(true);
         cleanup = onCleanup(@() setBusy(false)); %#ok<NASGU>
+        reportResult = [];
+        updateReportButton();
         testMessages.Value = {'Preparing selected iterations...'};
         drawnow;
         try
@@ -1048,6 +1074,7 @@ updateProjectView();
             progressRow = numel(testMessages.Value);
             drawnow;
             result = run(tc);
+            latestReportResult = result;
             if isa(result, 'sltest.testmanager.ResultSet')
                 result = getTestCaseResults(result);
             end
@@ -1115,6 +1142,11 @@ updateProjectView();
                 summary = summary + " | " + string(unknownCount) + " Unknown";
             end
             appendTestLog(summary);
+            % Only completed runs have reportable Test Manager results.
+            if processedCount > 0
+                reportResult = latestReportResult;
+            end
+            updateReportButton();
             % Populate the Data inspector from actual iteration results.
             try
                 recorded = collectDataResults(result, selected);
@@ -1150,6 +1182,119 @@ updateProjectView();
             end
         catch failure
             appendTestLog("Run Test failed: " + string(failure.message));
+        end
+    end
+
+    function updateReportButton()
+        % Do not show the action until this project has completed a run.
+        available = ~isempty(reportResult) && ~isempty(projectRoot);
+        genReportButton.Visible = matlab.lang.OnOffSwitchState(available);
+        genReportButton.Enable = matlab.lang.OnOffSwitchState(available && ~busy);
+        if available
+            testActions.ColumnWidth = {94, 94, 110, '1x'};
+        else
+            testActions.ColumnWidth = {94, 94, 0, '1x'};
+        end
+    end
+
+    function openReportDialog(~, ~)
+        if busy || isempty(reportResult) || isempty(projectRoot)
+            return
+        end
+        % The native Test Manager Report dialog is not exposed by a
+        % documented public MATLAB API. This dialog uses the supported
+        % sltest.testmanager.report() API with equivalent common options.
+        dlg = uifigure('Name', 'Generate Test Report', ...
+            'Position', [280 180 500 510], 'Resize', 'off', ...
+            'WindowStyle', 'modal');
+        grid = uigridlayout(dlg, [11 2], ...
+            'RowHeight', {30,30,30,30,30,30,30,30,30,'1x',38}, ...
+            'ColumnWidth', {173,'1x'}, 'RowSpacing', 7, ...
+            'Padding', [16 13 16 14]);
+        uilabel(grid, 'Text', 'File format');
+        format = uidropdown(grid, 'Items', {'PDF (.pdf)', 'Word (.docx)', 'HTML archive (.zip)'}, ...
+            'Value', 'PDF (.pdf)');
+        uilabel(grid, 'Text', 'Include test results');
+        included = uidropdown(grid, 'Items', {'All results', 'Passed only', 'Failed only'}, ...
+            'Value', 'All results');
+        uilabel(grid, 'Text', 'Report title');
+        titleField = uieditfield(grid, 'text', 'Value', 'Simulink Test Results');
+        uilabel(grid, 'Text', 'Author');
+        authorField = uieditfield(grid, 'text', 'Value', '');
+        uilabel(grid, 'Text', 'Simulation signal plots');
+        signalPlots = uicheckbox(grid, 'Text', 'Include', 'Value', false);
+        uilabel(grid, 'Text', 'Comparison signal plots');
+        comparisonPlots = uicheckbox(grid, 'Text', 'Include', 'Value', true);
+        uilabel(grid, 'Text', 'Error messages');
+        errorMessages = uicheckbox(grid, 'Text', 'Include', 'Value', true);
+        uilabel(grid, 'Text', 'Coverage results');
+        coverageResults = uicheckbox(grid, 'Text', 'Include (if recorded)', 'Value', false);
+        uilabel(grid, 'Text', 'Open after generating');
+        launchReport = uicheckbox(grid, 'Text', 'Yes', 'Value', true);
+        note = uilabel(grid, 'Text', ['Output folder: ' fullfile(projectRoot, 'output')], ...
+            'WordWrap', 'on', 'FontColor', muted);
+        note.Layout.Row = 10;
+        note.Layout.Column = [1 2];
+        buttons = uigridlayout(grid, [1 3], ...
+            'ColumnWidth', {'1x',110,110}, 'Padding', [0 0 0 0]);
+        buttons.Layout.Row = 11;
+        buttons.Layout.Column = [1 2];
+        uibutton(buttons, 'Text', 'Open Test Manager', ...
+            'ButtonPushedFcn', @(~,~) sltest.testmanager.view);
+        uibutton(buttons, 'Text', 'Cancel', ...
+            'ButtonPushedFcn', @(~,~) delete(dlg));
+        uibutton(buttons, 'Text', 'Generate', 'BackgroundColor', blue, ...
+            'FontColor', [1 1 1], 'ButtonPushedFcn', @generateReport);
+
+        function generateReport(~, ~)
+            if busy || isempty(reportResult) || ~isvalid(dlg)
+                return
+            end
+            formats = {'.pdf', '.docx', '.zip'};
+            formatNames = {'PDF (.pdf)', 'Word (.docx)', 'HTML archive (.zip)'};
+            ext = formats{strcmp(format.Value, formatNames)};
+            resultLabels = {'All results','Passed only','Failed only'};
+            idx = find(strcmp(included.Value, resultLabels), 1, 'first') - 1;
+            [~, projectName] = fileparts(projectFile);
+            if isempty(projectName)
+                projectName = 'SimulinkTest';
+            end
+            destinationFolder = fullfile(projectRoot, 'output');
+            if ~isfolder(destinationFolder)
+                mkdir(destinationFolder);
+            end
+            filePath = fullfile(destinationFolder, [projectName '_TestReport' ext]);
+            if isfile(filePath)
+                choice = uiconfirm(dlg, ...
+                    sprintf('This report already exists:\n%s\n\nReplace it?', filePath), ...
+                    'Replace Report', 'Options', {'Replace','Cancel'}, ...
+                    'DefaultOption', 2, 'CancelOption', 2, 'Icon', 'warning');
+                if ~strcmp(choice, 'Replace')
+                    return
+                end
+            end
+            setBusy(true);
+            restoreBusy = onCleanup(@() setBusy(false)); %#ok<NASGU>
+            try
+                sltest.testmanager.report(reportResult, filePath, ...
+                    'IncludeTestResults', idx, ...
+                    'Title', char(titleField.Value), ...
+                    'Author', char(authorField.Value), ...
+                    'IncludeSimulationSignalPlots', logical(signalPlots.Value), ...
+                    'IncludeComparisonSignalPlots', logical(comparisonPlots.Value), ...
+                    'IncludeErrorMessages', logical(errorMessages.Value), ...
+                    'IncludeCoverageResult', logical(coverageResults.Value), ...
+                    'LaunchReport', logical(launchReport.Value));
+                if ~isfile(filePath)
+                    error('BusHarnessApp:MissingReport', ...
+                        'Test Manager did not produce the expected report file.');
+                end
+                appendTestLog("Gen Report Successful: " + string(filePath));
+                delete(dlg);
+            catch reportError
+                appendTestLog("Gen Report Failed: " + string(reportError.message));
+                uialert(dlg, reportError.message, 'Gen Report Failed');
+            end
         end
     end
 
@@ -1228,6 +1373,7 @@ updateProjectView();
         hasTestFile = ~isempty(project.TestManagerFile) && ...
             isfile(fullfile(projectRoot, project.TestManagerFile));
         runTestButton.Enable = matlab.lang.OnOffSwitchState(~value && hasHarness && hasTestFile);
+        updateReportButton();
         if value
             testcaseSelectAll.Enable = 'off';
             pendingSelectAll.Enable = 'off';
