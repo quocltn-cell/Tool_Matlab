@@ -84,14 +84,18 @@ resultsGrid = uigridlayout(results, [1 1], 'Padding', [10 6 10 10]);
 buildLogArea = uitextarea(resultsGrid, 'Editable', 'off', ...
     'Value', {'Ready to build a harness.'});
 
-actions = uigridlayout(workspace, [1 4], 'ColumnWidth', {'1x', 128, 128, 143}, ...
-    'Padding', [0 0 0 0], 'ColumnSpacing', 10, 'BackgroundColor', paper);
+actions = uigridlayout(workspace, [1 5], ...
+    'ColumnWidth', {'1x', 126, 131, 194, 125}, ...
+    'Padding', [0 0 0 0], 'ColumnSpacing', 8, 'BackgroundColor', paper);
 statusLabel = uilabel(actions, 'Text', 'Ready', 'FontColor', muted);
 openButton = uibutton(actions, 'Text', 'Open Harness', ...
     'Tooltip', 'Open the latest harness, or choose an existing harness file', ...
     'ButtonPushedFcn', @openHarness);
-reloadButton = uibutton(actions, 'Text', 'Load Test Case', 'Enable', 'off', ...
-    'Tooltip', 'Create or update the checked Excel test cases in Signal Editor', ...
+refreshExcelButton = uibutton(actions, 'Text', 'Reload Testcase', ...
+    'Tooltip', 'Re-read the Excel workbooks and refresh only the testcase list on the app', ...
+    'ButtonPushedFcn', @reloadExcelPreview);
+reloadButton = uibutton(actions, 'Text', 'Load Testcase to Harness', 'Enable', 'off', ...
+    'Tooltip', 'Upsert checked Excel scenarios into the existing Signal Editor MAT file', ...
     'ButtonPushedFcn', @(~, ~) processHarness(true));
 buildButton = uibutton(actions, 'Text', 'Build Harness', 'BackgroundColor', blue, ...
     'FontColor', [1 1 1], 'FontWeight', 'bold', 'ButtonPushedFcn', @(~, ~) processHarness(false));
@@ -587,7 +591,9 @@ updateProjectView();
         end
     end
 
-    function readTestcaseNames()
+    function [caseCount, previewError] = readTestcaseNames()
+        caseCount = 0;
+        previewError = "";
         dataViewer.setExcelInputs(excelPaths,commonPaths);
         previousRun = testcaseList.Data;
         selectedRun = previousRun.TestCase(previousRun.Selected);
@@ -604,6 +610,7 @@ updateProjectView();
         end
         try
             [names, entries] = readHarnessExcelNames(excelPaths);
+            caseCount = numel(names);
             imported = importedScenarioNames();
             alreadyLoaded = ismember(harnessScenarioNames(names), imported);
             current = unique(names(alreadyLoaded),'stable');
@@ -645,6 +652,7 @@ updateProjectView();
             end
             refreshSelectAllButtons();
         catch failure
+            previewError = string(failure.message);
             pendingList.Data = emptyTestcaseTable();
             testcaseList.Data = emptyTestcaseTable();
             pendingCount.Text = ['Excel preview failed: ' failure.message];
@@ -652,6 +660,32 @@ updateProjectView();
             refreshSelectAllButtons();
         end
 
+    end
+
+    function reloadExcelPreview(~, ~)
+        % Refresh only the app's File/Sheet/Case checklist. This must not
+        % create/rewrite the Signal Editor MAT file or touch the harness.
+        if busy, return; end
+        setBusy(true);
+        cleanup = onCleanup(@() setBusy(false)); %#ok<NASGU>
+        try
+            if isempty(excelPaths)
+                error('BusHarnessApp:ExcelSelection', ...
+                    'Add at least one Test Case Excel file before reloading.');
+            end
+            [count, failureText] = readTestcaseNames();
+            if strlength(failureText) > 0
+                error('BusHarnessApp:ExcelPreview', '%s', char(failureText));
+            end
+            buildLogArea.Value = {'Reload Testcase Successful'; ...
+                sprintf('Excel testcase(s) displayed: %d', count); ...
+                'Signal Editor MAT file: unchanged'};
+            statusLabel.Text = 'Excel testcase list refreshed';
+        catch failure
+            buildLogArea.Value = {'Reload Testcase Failed'; ...
+                ['Error: ' failure.message]};
+            statusLabel.Text = 'Reload Testcase failed';
+        end
     end
 
     function [visible,checked] = addPendingRow(kind,file,sheet,name,label, ...
@@ -759,7 +793,7 @@ updateProjectView();
         end
         % Reset Build Log for each button press; no paths/version/debug text.
         if reload
-            operation = "Load Test Case";
+            operation = "Load Testcase to Harness";
         else
             operation = "Build Harness";
         end
@@ -803,7 +837,7 @@ updateProjectView();
                     makeFolder(outputFolder);
                 end
             end
-            % Reload updates existing Signal Editor scenarios; Build Harness
+            % Load to Harness updates the existing Signal Editor MAT file; Build Harness
             % rebuilds the ONLY generated harness for the selected model.
             existingHarness = string(savedHarnessFile());
             if reload && (existingHarness == "" || ~isfile(existingHarness))
@@ -849,7 +883,7 @@ updateProjectView();
                 writeProject(projectFile, project);
             end
             if reload
-                buildLogArea.Value = {char(sprintf('Load Test Case Successful')); ...
+                buildLogArea.Value = {char(sprintf('Load Testcase to Harness Successful')); ...
                     char(sprintf('Testcase reload successful: %d', total)); ...
                     'Testcase reload fail: 0'};
             else
@@ -859,14 +893,16 @@ updateProjectView();
             end
             statusLabel.Text = char(operation + " successful");
             readTestcaseNames();
-            % Data tab lists executed cases only; Build Harness does not
-            % create execution results. Clear stale results after rebuild.
+            % Test results/plots refer to the previous MAT data and become
+            % stale after either a MAT update or a full harness rebuild.
             dataViewer.clear();
+            reportResult = [];
+            updateReportButton();
         catch failure
             % Current implementation imports the selected testcases as one
             % atomic batch. On failure it does not claim partial successes.
             if reload
-                buildLogArea.Value = {'Load Test Case Failed'; ...
+                buildLogArea.Value = {'Load Testcase to Harness Failed'; ...
                     'Testcase reload successful: 0'; ...
                     char(sprintf('Testcase reload fail: %d', total)); ...
                     ['Error: ' failure.message]};
@@ -1461,7 +1497,7 @@ updateProjectView();
         simulationMode.Enable = enabled;
         coverageEnabled.Enable = enabled;
         set(metricOptions, 'Enable', enabled);
-        set([modelButton, openModelButton, openTestCaseButton, openCommonButton, buildButton], 'Enable', enabled);
+        set([modelButton, openModelButton, openTestCaseButton, openCommonButton, buildButton, refreshExcelButton], 'Enable', enabled);
         openButton.Enable = enabled;
         menuButton.Enable = enabled;
         projectActionsEnabled = matlab.lang.OnOffSwitchState(~value && ~isempty(projectRoot));
