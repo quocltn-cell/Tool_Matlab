@@ -1,4 +1,11 @@
-# Simulink Testing v1.2.64
+# Simulink Testing v1.2.65
+
+## v1.2.65 — Fix Load Test Case error after Run Test
+
+- Fix the MATLAB nested-function variable collision in `BusHarnessApp.m`: `updateTestLogLine` previously used `messages` as a temporary string array, overwriting the Setting Build Log `uitextarea` handle after Run Test. Rename the UI control to `buildLogArea` and use `logLines` for the Run Test array.
+- Re-importing selected Excel testcases through **Load Test Case** after **Run Test** now preserves the Build Log control and reaches the existing Create/Update scenario workflow. No change to merge, datatype checks, or simulation logic.
+- Close the previous app and run `clear BusHarnessApp` before launching v1.2.65 to discard stale nested-function state.
+- Source-checked only; not runtime-tested in MATLAB/Simulink.
 
 ## v1.2.64 — Multi-sheet import, hierarchical selection and strict value ranges
 

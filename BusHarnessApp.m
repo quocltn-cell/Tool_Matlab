@@ -81,7 +81,7 @@ pendingList = uitable(pendingGrid, 'Data', emptyTestcaseTable(), ...
 
 results = uipanel(logSplit, 'Title', 'Build Log' , 'FontWeight', 'bold');
 resultsGrid = uigridlayout(results, [1 1], 'Padding', [10 6 10 10]);
-messages = uitextarea(resultsGrid, 'Editable', 'off', ...
+buildLogArea = uitextarea(resultsGrid, 'Editable', 'off', ...
     'Value', {'Ready to build a harness.'});
 
 actions = uigridlayout(workspace, [1 4], 'ColumnWidth', {'1x', 128, 128, 143}, ...
@@ -397,7 +397,7 @@ updateProjectView();
             data.TestCaseFiles, 'UniformOutput', false), false);
         setExcelFiles(data.CommonFiles, true);
         status.Text = 'Ready';
-        messages.Value = {'Ready to build a harness.'};
+        buildLogArea.Value = {'Ready to build a harness.'};
         projectLabel.Text = 'No project open';
         if ~isempty(root)
             [~, projectName] = fileparts(projectFile);
@@ -750,7 +750,7 @@ updateProjectView();
 
     function appendLog(lines)
         lines = string(lines);
-        messages.Value = [string(messages.Value(:)); lines(:)];
+        buildLogArea.Value = [string(buildLogArea.Value(:)); lines(:)];
     end
 
     function processHarness(reload)
@@ -773,7 +773,7 @@ updateProjectView();
         catch
         end
         total = numel(selected);
-        messages.Value = {char(operation + " in progress...")};
+        buildLogArea.Value = {char(operation + " in progress...")};
         drawnow;
         setBusy(true);
         cleanup = onCleanup(@() setBusy(false)); %#ok<NASGU>
@@ -849,11 +849,11 @@ updateProjectView();
                 writeProject(projectFile, project);
             end
             if reload
-                messages.Value = {char(sprintf('Load Test Case Successful')); ...
+                buildLogArea.Value = {char(sprintf('Load Test Case Successful')); ...
                     char(sprintf('Testcase reload successful: %d', total)); ...
                     'Testcase reload fail: 0'};
             else
-                messages.Value = {'Build Harness Successful'; ...
+                buildLogArea.Value = {'Build Harness Successful'; ...
                     char(sprintf('Testcase import successful: %d', total)); ...
                     'Testcase import fail: 0'};
             end
@@ -866,12 +866,12 @@ updateProjectView();
             % Current implementation imports the selected testcases as one
             % atomic batch. On failure it does not claim partial successes.
             if reload
-                messages.Value = {'Load Test Case Failed'; ...
+                buildLogArea.Value = {'Load Test Case Failed'; ...
                     'Testcase reload successful: 0'; ...
                     char(sprintf('Testcase reload fail: %d', total)); ...
                     ['Error: ' failure.message]};
             else
-                messages.Value = {'Build Harness Failed'; ...
+                buildLogArea.Value = {'Build Harness Failed'; ...
                     'Testcase import successful: 0'; ...
                     char(sprintf('Testcase import fail: %d', total)); ...
                     ['Error: ' failure.message]};
@@ -1426,10 +1426,11 @@ updateProjectView();
     end
 
     function updateTestLogLine(rowIndex, line)
-        messages = string(testMessages.Value(:));
-        if rowIndex >= 1 && rowIndex <= numel(messages)
-            messages(rowIndex) = string(line);
-            testMessages.Value = messages;
+        % Keep Run Test text local; do not overwrite the Setting Build Log handle.
+        logLines = string(testMessages.Value(:));
+        if rowIndex >= 1 && rowIndex <= numel(logLines)
+            logLines(rowIndex) = string(line);
+            testMessages.Value = logLines;
         end
     end
 
