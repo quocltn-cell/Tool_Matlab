@@ -155,7 +155,8 @@ runSettings.Layout.Row = 2;
 runSettings.Layout.Column = 2;
 runOptions = uigridlayout(runSettings, [4 1], 'RowHeight', {22, 26, 22, 0}, ...
     'Padding', [8 6 8 6], 'RowSpacing', 4, 'Scrollable', 'on');
-fastRestart = uicheckbox(runOptions, 'Text', 'Fast Restart mode');
+fastRestart = uicheckbox(runOptions, 'Text', 'Fast Restart mode', ...
+    'ValueChangedFcn', @onFastRestartChanged);
 simulationOptions = uigridlayout(runOptions, [1 2], 'ColumnWidth', {112, '1x'}, ...
     'Padding', [0 0 0 0], 'ColumnSpacing', 6);
 uilabel(simulationOptions, 'Text', 'Simulation Mode');
@@ -1167,7 +1168,7 @@ updateProjectView();
                 appendTestLog("Output capture configuration warning: " + ...
                     string(outputConfigureError.message));
             end
-            applyRunSettings(tf, tc);
+            applyRunSettings(tf, tc, harness);
             wasEnabled = false(size(iterations));
             for k = 1:numel(iterations)
                 wasEnabled(k) = logical(iterations(k).Enabled);
@@ -1437,12 +1438,72 @@ updateProjectView();
         end
     end
 
-    function applyRunSettings(tf, tc)
+    function onFastRestartChanged(~, ~)
+        % Sync both the loaded harness model and Test Manager immediately.
+        % If a harness/test file has not been built yet, Run Test will apply
+        % the selected value once the files are available.
+        if busy
+            return
+        end
+        requested = logical(fastRestart.Value);
+        harnessFile = savedHarnessFile();
+        if isempty(harnessFile) || ~isfile(harnessFile)
+            return
+        end
+        previous = ~requested;
+        modelName = '';
+        try
+            [modelName, previous] = setHarnessFastRestart(harnessFile, requested);
+            applyFastRestartToTestManager(requested, modelName);
+        catch err
+            % If the Test Manager setting fails, restore the harness and
+            % checkbox rather than leaving two different restart modes.
+            if ~isempty(modelName)
+                try
+                    set_param(modelName, 'FastRestart', fastRestartText(previous));
+                catch
+                end
+            end
+            fastRestart.Value = previous;
+            uialert(app, sprintf('Cannot synchronize Fast Restart: %s', err.message), ...
+                'Fast Restart');
+        end
+    end
+
+    function applyFastRestartToTestManager(enabled, harnessName)
+        if isempty(projectRoot) || isempty(project.TestManagerFile)
+            return
+        end
+        testFile = fullfile(projectRoot, project.TestManagerFile);
+        if ~isfile(testFile)
+            return
+        end
+        tfSync = sltest.testmanager.TestFile(testFile);
+        [~, modelName] = fileparts(char(modelPath));
+        suiteSync = getTestSuiteByName(tfSync, [modelName '_TestSuite']);
+        if isempty(suiteSync)
+            error('BusHarnessApp:FastRestartSuite', ...
+                'Test Manager suite was not found; use Build Test.');
+        end
+        tcSync = getTestCaseByName(suiteSync, modelName);
+        if isempty(tcSync) || ~strcmp(char(string(getProperty(tcSync, 'Model'))), harnessName)
+            error('BusHarnessApp:FastRestartCase', ...
+                'Test Manager case targets a different harness; use Build Test.');
+        end
+        setProperty(tcSync, 'FastRestart', logical(enabled));
+        saveToFile(tfSync);
+    end
+
+    function applyRunSettings(tf, tc, harness)
         recordCoverage = coverageEnabled.Value;
         metrics = metricCodes([metricOptions.Value]);
         if recordCoverage && isempty(metrics)
             error('BusHarnessApp:CoverageMetrics', 'Select at least one coverage metric.');
         end
+        % Apply to the actual harness as well as the iteration test case.
+        % The output logging setup runs before this step, so it can still
+        % modify the model before enabling Fast Restart.
+        setHarnessFastRestart(savedHarnessFile(), logical(fastRestart.Value));
         setProperty(tc, 'FastRestart', fastRestart.Value, 'SimulationMode', simulationMode.Value);
         coverage = getCoverageSettings(tf);
         if recordCoverage
@@ -2053,5 +2114,35 @@ for k=1:numel(ports.Outport)
     if ~exists
         addLoggedSignal(chosen,block,k);
     end
+end
+end
+
+function [name, previous] = setHarnessFastRestart(file, enabled)
+%SETHARNESSFASTRESTART Set Fast Restart on the harness top-level model.
+if ~isfile(file)
+    error('BusHarnessApp:FastRestartHarness', 'Harness file does not exist. Build Harness first.');
+end
+[~, name] = fileparts(char(file));
+if bdIsLoaded(name)
+    loadedFile = get_param(name, 'FileName');
+    if ~strcmpi(char(string(loadedFile)), char(string(file)))
+        error('BusHarnessApp:FastRestartHarness', ...
+            'Another model named "%s" is loaded. Close that model first.', name);
+    end
+else
+    load_system(file);
+end
+previous = strcmpi(get_param(name, 'FastRestart'), 'on');
+requested = fastRestartText(enabled);
+if previous ~= logical(enabled)
+    set_param(name, 'FastRestart', requested);
+end
+end
+
+function value = fastRestartText(enabled)
+if enabled
+    value = 'on';
+else
+    value = 'off';
 end
 end

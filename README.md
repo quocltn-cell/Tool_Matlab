@@ -1,4 +1,11 @@
-# Simulink Testing v1.2.67
+# Simulink Testing v1.2.68
+
+## v1.2.68 — Sync Fast Restart on Harness and Test Manager
+
+- The **Fast Restart mode** checkbox in Run Test now updates the loaded harness model via `set_param(harness, 'FastRestart', 'on'/'off')` and the Test Manager test case `FastRestart` property. The latter governs running its iterations in Fast Restart.
+- The same synchronization is applied before Run Test; signal logging configuration is performed first. If no harness/MLDATX exists when checking the option, the selection is retained and applied on Run Test when available.
+- If immediate synchronization to a built Test Manager file fails, the UI selection and loaded harness FastRestart state are rolled back and a diagnostic alert is shown. Model fast-restart state is a runtime state; the tool does not recompile the model merely by checking the box.
+- Requires validation in MATLAB/Simulink for the installed release and model configurations.
 
 ## v1.2.67 — Separate Excel preview refresh from Signal Editor MAT import
 

@@ -19,7 +19,7 @@ arguments
     existingHarness (1,1) string = ""
 end
 
-toolVersion = "1.2.67";
+toolVersion = "1.2.68";
 if model == ""
     [model, excelFile] = selectHarnessFiles(toolVersion);
     if model == ""
