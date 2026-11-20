@@ -1,4 +1,12 @@
-# Simulink Testing v1.2.65
+# Simulink Testing v1.2.66
+
+## v1.2.66 — Fix Run Test status UI collision on re-import
+
+- Fixed another MATLAB nested-function shared variable collision: `status` held the Setting `uilabel`, but `runTest` also used `status` for each iteration outcome. After Run Test, the label was overwritten by a string and `processHarness` failed at `status.Text` on Load Test Case.
+- Use separate `statusLabel` (the UI handle) and `iterationStatus` (the result text). The earlier `buildLogArea` separation from v1.2.65 is preserved.
+- Added `tests/check_ui_handle_collisions.py` to detect accidental reassignment of GUI handles in `BusHarnessApp.m` during future edits.
+- To clear the already corrupted in-memory nested workspace, close the old GUI and run `clear BusHarnessApp` before reopening.
+- This is a source-level fix; MATLAB runtime testing is still required.
 
 ## v1.2.65 — Fix Load Test Case error after Run Test
 

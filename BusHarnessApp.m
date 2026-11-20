@@ -86,7 +86,7 @@ buildLogArea = uitextarea(resultsGrid, 'Editable', 'off', ...
 
 actions = uigridlayout(workspace, [1 4], 'ColumnWidth', {'1x', 128, 128, 143}, ...
     'Padding', [0 0 0 0], 'ColumnSpacing', 10, 'BackgroundColor', paper);
-status = uilabel(actions, 'Text', 'Ready', 'FontColor', muted);
+statusLabel = uilabel(actions, 'Text', 'Ready', 'FontColor', muted);
 openButton = uibutton(actions, 'Text', 'Open Harness', ...
     'Tooltip', 'Open the latest harness, or choose an existing harness file', ...
     'ButtonPushedFcn', @openHarness);
@@ -396,7 +396,7 @@ updateProjectView();
         setExcelFiles(cellfun(@(path) testcasePath(root, path), ...
             data.TestCaseFiles, 'UniformOutput', false), false);
         setExcelFiles(data.CommonFiles, true);
-        status.Text = 'Ready';
+        statusLabel.Text = 'Ready';
         buildLogArea.Value = {'Ready to build a harness.'};
         projectLabel.Text = 'No project open';
         if ~isempty(root)
@@ -411,7 +411,7 @@ updateProjectView();
 
     function saveProject(~, ~)
         if ~busy && ~isempty(projectRoot) && saveSelection(true)
-            status.Text = 'Project saved';
+            statusLabel.Text = 'Project saved';
 
         end
     end
@@ -857,7 +857,7 @@ updateProjectView();
                     char(sprintf('Testcase import successful: %d', total)); ...
                     'Testcase import fail: 0'};
             end
-            status.Text = char(operation + " successful");
+            statusLabel.Text = char(operation + " successful");
             readTestcaseNames();
             % Data tab lists executed cases only; Build Harness does not
             % create execution results. Clear stale results after rebuild.
@@ -876,7 +876,7 @@ updateProjectView();
                     char(sprintf('Testcase import fail: %d', total)); ...
                     ['Error: ' failure.message]};
             end
-            status.Text = char(operation + " failed");
+            statusLabel.Text = char(operation + " failed");
         end
     end
 
@@ -1164,9 +1164,9 @@ updateProjectView();
                     if strlength(strtrim(iterationLabel)) == 0
                         iterationLabel = "Iteration " + string(j);
                     end
-                    status = iterationOutcomeText(details(j).Outcome);
-                    appendTestLog(iterationLabel + ": " + status);
-                    switch lower(strtrim(status))
+                    iterationStatus = iterationOutcomeText(details(j).Outcome);
+                    appendTestLog(iterationLabel + ": " + iterationStatus);
+                    switch lower(strtrim(iterationStatus))
                         case "passed"
                             passedCount = passedCount + 1;
                         case "failed"
@@ -1178,7 +1178,7 @@ updateProjectView();
                         otherwise
                             unknownCount = unknownCount + 1;
                     end
-                    if status == "Failed"
+                    if iterationStatus == "Failed"
                         try
                             errorLines = string(details(j).ErrorMessages);
                             errorLines = errorLines(strlength(strtrim(errorLines)) > 0);
