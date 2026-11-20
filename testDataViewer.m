@@ -324,6 +324,56 @@ viewer.setExcelInputs = @setExcelInputs;
         state.OutputChoices = intersect(state.OutputChoices,names,'stable');
         v.SignalList.Data = table(ismember(names,state.OutputChoices),names, ...
             'VariableNames',{'Selected','Signal'});
+        styleOutputSignalRows(v.SignalList,names);
+    end
+
+    function styleOutputSignalRows(signalTable,names)
+        % Color every Excel output row independently of Plot selection.
+        % Red: verified Model / Expect waveforms differ at one or more
+        % discrete time intervals. Green: identical over the input timeline.
+        % Neutral: either trace is missing / ambiguous or data are unreadable.
+        % This is an exact waveform comparison, not a Test Assessment verdict.
+        try
+            removeStyle(signalTable);
+            names = reshape(string(names),[],1);
+            if isempty(names) || isempty(state.Results), return; end
+            caseName = string(state.SelectedOutputCase);
+            resultIndex = find(strcmp(string({state.Results.Name}),caseName),1);
+            if isempty(resultIndex), return; end
+            [expected,~] = readScenario(state.ScenarioFile,caseName);
+            if isempty(expected), return; end
+            expected = expected(contains(lower(string({expected.Name})),"_exp"));
+            paired = pairOutputs(state.Results(resultIndex).Signals,expected);
+            if isempty(paired), return; end
+            [tStart,tEnd,hasTimeline] = scenarioInputTimeline(state.ScenarioFile,caseName);
+            redRows = [];
+            greenRows = [];
+            for rowNumber = 1:numel(names)
+                match = false(numel(paired),1);
+                for signalNumber = 1:numel(paired)
+                    match(signalNumber) = signalMatches(paired(signalNumber).Name,names(rowNumber));
+                end
+                % Never infer an outcome from an ambiguous signal match.
+                if nnz(match) ~= 1, continue; end
+                matched = paired(find(match,1));
+                comparison = compareOutputWaveforms(matched,tStart,tEnd,hasTimeline);
+                if comparison == "Different"
+                    redRows(end+1) = rowNumber; %#ok<AGROW>
+                elseif comparison == "Equal"
+                    greenRows(end+1) = rowNumber; %#ok<AGROW>
+                end
+            end
+            if ~isempty(redRows)
+                addStyle(signalTable,uistyle('BackgroundColor',[1.00 0.88 0.88]),'row',redRows);
+            end
+            if ~isempty(greenRows)
+                addStyle(signalTable,uistyle('BackgroundColor',[0.87 0.97 0.88]),'row',greenRows);
+            end
+        catch styleError
+            % A read or graphics error must not hide the signal choices.
+            warning('SimulinkTesting:OutputSignalColors', ...
+                'Unable to color output signal rows: %s',styleError.message);
+        end
     end
 
     function chooseOutputSignal(evt)
@@ -898,6 +948,49 @@ for i=1:numel(expected)
         'ExpectTime',expected(i).Time, ...
         'ExpectData',expected(i).Data); %#ok<AGROW>
 end
+end
+
+function result = compareOutputWaveforms(pair,tStart,tEnd,hasTimeline)
+%COMPAREOUTPUTWAVEFORMS Compare two discrete step signals in time order.
+% This is a strict sample-value match; a Test Assessment may use different
+% tolerances, so this color is a visual diagnostic, not a Pass/Fail verdict.
+result = "Unknown";
+if isempty(pair.ModelTime) || isempty(pair.ModelData) || ...
+        isempty(pair.ExpectTime) || isempty(pair.ExpectData)
+    return
+end
+try
+    [modelTime,modelData] = scalarWaveform(pair.ModelTime,pair.ModelData);
+    [expectTime,expectData] = scalarWaveform(pair.ExpectTime,pair.ExpectData);
+catch
+    return
+end
+if isempty(modelTime) || isempty(expectTime), return; end
+if ~hasTimeline
+    % Without scenario inputs, compare the overlapping logged interval.
+    tStart = max(modelTime(1),expectTime(1));
+    tEnd = min(modelTime(end),expectTime(end));
+end
+if ~isfinite(tStart) || ~isfinite(tEnd) || tEnd < tStart, return; end
+if modelTime(1) > tStart + 1e-10 || expectTime(1) > tStart + 1e-10
+    % A missing prefix must not be marked as equal.
+    return
+end
+checkTimes = unique([tStart; tEnd; ...
+    modelTime(modelTime>=tStart & modelTime<=tEnd); ...
+    expectTime(expectTime>=tStart & expectTime<=tEnd)]);
+% Guard against an unexpectedly massive logging dataset.
+if isempty(checkTimes) || numel(checkTimes)>200000, return; end
+for k=1:numel(checkTimes)
+    modelValue = sampleAt(modelTime,modelData,checkTimes(k));
+    expectValue = sampleAt(expectTime,expectData,checkTimes(k));
+    if ~isfinite(modelValue) || ~isfinite(expectValue), return; end
+    if modelValue ~= expectValue
+        result = "Different";
+        return
+    end
+end
+result = "Equal";
 end
 
 function name = normalizeOutputPath(raw)

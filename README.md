@@ -1,3 +1,15 @@
+# Simulink Testing v1.2.69
+
+## v1.2.69 — Output Signal comparison highlighting
+
+- In Data → Output, each row of **Output Signals (Excel)** is colored light red if the logged Model output and Signal Editor Expected output differ at any discrete step in the testcase input timeline.
+- Rows are colored light green only if both Model and Expect are available, paired unambiguously and their values match throughout that timeline.
+- Missing or ambiguous Model/Expect signals and unreadable/non-scalar waveforms retain a neutral background, never a false green status.
+- Comparison is exact and uses zero-order hold across the union of recorded sample times. Coloring is informational, not a substitute for Test Manager assessments or tolerance-based verification.
+- Highlighting updates when you change the selected output testcase or refresh Run Test results. It is independent of the signal Plot checkboxes.
+- Existing Model (red), Expect (purple), matching segments (green), cursor and plot functionality remain unchanged.
+- Changes are viewer-only: no Build Harness or Build Test is necessary. MATLAB runtime validation is still required.
+
 # Simulink Testing v1.2.68
 
 ## v1.2.68 — Sync Fast Restart on Harness and Test Manager
