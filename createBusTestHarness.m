@@ -19,7 +19,7 @@ arguments
     existingHarness (1,1) string = ""
 end
 
-toolVersion = "1.2.72";
+toolVersion = "1.2.73";
 if model == ""
     [model, excelFile] = selectHarnessFiles(toolVersion);
     if model == ""
@@ -285,12 +285,27 @@ if bdIsLoaded(harness)
         error('BusHarness:Reload', ...
             'A different model with the harness name is loaded. Close it and retry.');
     end
-    if ~strcmpi(get_param(harness, 'SimulationStatus'), 'stopped')
-        error('BusHarness:Reload', ...
-            'Stop the running simulation before updating the Signal Editor MAT file. Fast Restart may remain on.');
+    % Fast Restart can leave the model 'initialized' between simulations.
+    % MAT-only Value/Time updates are permitted in that state; changing
+    % a block parameter or the model is deliberately NOT attempted here.
+    % Other states, including paused and running, are not safe to update.
+    simStatus = char(get_param(harness, 'SimulationStatus'));
+    if ~any(strcmpi(simStatus, {'stopped','initialized'}))
+        error('BusHarness:ReloadBusy', ...
+            ['Harness "%s" has SimulationStatus="%s". ' ...
+             'Finish the active simulation before Reload Testcase. ' ...
+             'An initialized Fast Restart session does not need to be disabled.'], ...
+            harness, simStatus);
     end
 end
 load_system(harnessFile);
+% Recheck after load_system in case another callback changed the state.
+reloadStatus = char(get_param(harness, 'SimulationStatus'));
+if ~any(strcmpi(reloadStatus, {'stopped','initialized'}))
+    error('BusHarness:ReloadBusy', ...
+        'Harness "%s" is "%s". Stop the active simulation before Reload Testcase.', ...
+        harness, reloadStatus);
+end
 cut = [harness '/Model Under Test'];
 editor = [harness '/Signal Editor'];
 if getSimulinkBlockHandle(cut) < 0 || getSimulinkBlockHandle(editor) < 0 || ...
@@ -375,6 +390,18 @@ try
     if ~all(ismember(labels, writtenNames))
         error('BusHarness:MATVerification', 'Updated MAT is missing scenarios after writing.');
     end
+    % Verify actual scenario values, not only variable names. A successful
+    % disk check does NOT prove the initialized Signal Editor cache reloaded.
+    for scenarioIndex = 1:numel(selectedScenarioNames)
+        scenarioName = char(selectedScenarioNames(scenarioIndex));
+        written = load(matFile, scenarioName);
+        if ~isfield(written, scenarioName) || ...
+                ~isequaln(written.(scenarioName), scenarioData.(scenarioName))
+            error('BusHarness:MATVerification', ...
+                'MAT verification failed for scenario "%s". The previous MAT will be restored.', ...
+                scenarioName);
+        end
+    end
 catch failure
     try
         backupReloadFile(matBackup, matFile);
@@ -389,6 +416,9 @@ info = struct('ToolVersion', toolVersion, 'Harness', harness, 'HarnessFile', har
     'ScenarioFile', matFile, 'SignalEditor', editor, 'ExcelFile', excelFile, ...
     'Scenarios', labels, 'ExpectedOutputs', [], ...
     'SmartRestartCompatible', compatibility.Compatible, ...
+    'MatFileVerified', true, ...
+    'SignalEditorCacheVerified', false, ...
+    'SimulationStatusAtReload', string(reloadStatus), ...
     'AddedScenarios', compatibility.Added, 'UpdatedScenarios', compatibility.Updated);
 end
 
