@@ -893,6 +893,12 @@ updateProjectView();
                     'Testcase import fail: 0'};
             end
             statusLabel.Text = char(operation + " successful");
+            if reload && isfield(info,'AddedScenarios') && ~isempty(info.AddedScenarios)
+                % New MAT scenarios need corresponding Test Manager iterations.
+                % Do not silently run old iterations with an updated MAT list.
+                buildLogArea.Value = [buildLogArea.Value; ...
+                    {'New scenario added. Use Build Test to update iterations.'}];
+            end
             readTestcaseNames();
             % Test results/plots refer to the previous MAT data and become
             % stale after either a MAT update or a full harness rebuild.
@@ -1145,6 +1151,15 @@ updateProjectView();
             end
             if ~isequal(sort(iterationNames), sort(scenarios))
                 error('BusHarnessApp:TestIterations', 'The scenario list changed. Use Build Test to update the iterations.');
+            end
+            % Validate that the MAT linked to Signal Editor actually has
+            % every selected scenario before running. Scenario changes are
+            % applied by Test Manager iterations; this preflight does not
+            % claim compilation reuse across independent run(tc) calls.
+            verifyHarnessMatBeforeRun(savedHarnessFile(), selected);
+            if logical(fastRestart.Value)
+                appendTestLog("Smart Fast Restart: MAT scenarios verified; " + ...
+                    "compiled-state reuse is controlled by Simulink Test Manager.");
             end
             % Log model output ports for the Data/Output inspector.
             try
@@ -2144,5 +2159,33 @@ if enabled
     value = 'on';
 else
     value = 'off';
+end
+end
+
+function verifyHarnessMatBeforeRun(harnessFile, selected)
+%VERIFYHARNESSMATBEFORERUN Guard against stale MAT link or missing scenarios.
+if ~isfile(harnessFile)
+    error('BusHarnessApp:MissingHarness', 'Harness file is missing.');
+end
+[folder, harness] = fileparts(char(harnessFile));
+load_system(char(harnessFile));
+editor = [harness '/Signal Editor'];
+linked = string(get_param(editor, 'Filename'));
+if ~isfile(linked)
+    linked = string(fullfile(folder, char(linked)));
+end
+if ~isfile(linked)
+    error('BusHarnessApp:MissingScenarioMAT', ...
+        'Signal Editor MAT file is not accessible. Use Load Testcase to Harness.');
+end
+variables = whos('-file', char(linked));
+matNames = string({variables(strcmp({variables.class}, ...
+    'Simulink.SimulationData.Dataset')).name});
+missing = reshape(string(selected),[],1);
+missing = missing(~ismember(missing,matNames));
+if ~isempty(missing)
+    error('BusHarnessApp:MissingScenario', ...
+        'Selected scenario(s) missing in current Signal Editor MAT: %s. Reload or Build Test.', ...
+        strjoin(cellstr(missing),', '));
 end
 end

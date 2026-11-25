@@ -1,3 +1,15 @@
+# Simulink Testing v1.2.70
+
+## v1.2.70 — Smart Fast Restart-compatible testcase MAT updates
+
+- **Load Testcase to Harness** checks the incoming Signal Editor Dataset scenarios against the current MAT file **before** writing data. A change limited to Time / Value / number of samples is accepted if bus field names, types, per-sample dimensions, and Dataset port names/order remain the same. Incompatible changes abort with the exact signal path and instructions to **Build Harness**, leaving the original MAT file intact.
+- MAT updates are staged and backed up. When harness `FastRestart=on`, the import updates its MAT file **without changing the Signal Editor filename or saving/rebuilding the harness**. When Fast Restart is off, the previous conservative filename-rebind path is retained. These behaviors aim to avoid unnecessary recompilation, not to override Simulink's own compile decisions.
+- If new scenarios are imported, Setting Build Log says to use **Build Test** to add corresponding Test Manager iterations.
+- **Run Test** performs a preflight that the currently linked Signal Editor MAT file exists and includes all selected scenario datasets; missing or stale links cause a clear error rather than silently testing an old scenario list.
+- `Reload Testcase` remains a preview-only Excel refresh and does not change the MAT file.
+- **Limitation:** updating an external MAT file does not guarantee an already-initialized Signal Editor block rereads it without recompilation. Test Manager Fast Restart primarily reuses compilation *between compatible iterations within a run*. Reuse across separate `run(tc)` calls depends on the MATLAB release, run lifecycle, and cached state. Verify with a representative model that the new waveform is actually used. If Simulink will not refresh the data, disable Fast Restart, reload/reinitialize and run again (which may compile).
+- Checked with Python static smoke tests and ZIP integrity; **MATLAB/Simulink execution has not been performed**.
+
 # Simulink Testing v1.2.69
 
 ## v1.2.69 — Output Signal comparison highlighting

@@ -19,7 +19,7 @@ arguments
     existingHarness (1,1) string = ""
 end
 
-toolVersion = "1.2.68";
+toolVersion = "1.2.70";
 if model == ""
     [model, excelFile] = selectHarnessFiles(toolVersion);
     if model == ""
@@ -324,6 +324,10 @@ previousVariables = whos('-file', matFile);
 previousScenarioNames = reshape(string({previousVariables(strcmp({previousVariables.class}, ...
     'Simulink.SimulationData.Dataset')).name}), [], 1);
 selectedScenarioNames = labels(:);
+% Compare new values against the existing MAT before touching the original.
+% Time/value changes are allowed; datatype, signal dimensions and port/bus
+% layout changes require a harness rebuild (and potentially recompilation).
+compatibility = validateScenarioUpdate(string(matFile), scenarioData);
 for k = 1:numel(previousScenarioNames)
     name = char(previousScenarioNames(k));
     if ~ismember(string(name), selectedScenarioNames)
@@ -351,12 +355,25 @@ catch failure
 end
 wasOpen = strcmp(get_param(harness, 'Open'), 'on');
 try
-    % Apply a different filename first so the block refreshes the scenario list.
-    set_param(editor, 'Filename', staged);
-    backupReloadFile(staged, matFile);
-    set_param(editor, 'Filename', matFile);
-    set_param(editor, 'ActiveScenario', active);
-    save_system(harness);
+    % For compatible MAT-only changes, do not alter model block parameters
+    % while Fast Restart is enabled: doing so can discard the compiled model.
+    % Test Manager selects a Signal Editor scenario at simulation start.
+    % Never promise that a separate Test Manager run reuses the old snapshot.
+    keepFastRestart = strcmpi(get_param(harness,'FastRestart'),'on');
+    if keepFastRestart
+        backupReloadFile(staged, matFile);
+        % Refresh active scenario selection through the supported parameter.
+        % The MAT path remains unchanged; no save_system on the harness.
+        set_param(editor,'ActiveScenario',active);
+    else
+        % When Fast Restart is off, force the block to bind to the updated
+        % MAT file; this is the existing conservative refresh mechanism.
+        set_param(editor, 'Filename', staged);
+        backupReloadFile(staged, matFile);
+        set_param(editor, 'Filename', matFile);
+        set_param(editor, 'ActiveScenario', active);
+        save_system(harness);
+    end
 catch failure
     try
         close_system(harness, 0);
@@ -376,7 +393,9 @@ removeReloadBackup(matBackup);
 removeReloadBackup(harnessBackup);
 info = struct('ToolVersion', toolVersion, 'Harness', harness, 'HarnessFile', harnessFile, ...
     'ScenarioFile', matFile, 'SignalEditor', editor, 'ExcelFile', excelFile, ...
-    'Scenarios', labels, 'ExpectedOutputs', []);
+    'Scenarios', labels, 'ExpectedOutputs', [], ...
+    'SmartRestartCompatible', compatibility.Compatible, ...
+    'AddedScenarios', compatibility.Added, 'UpdatedScenarios', compatibility.Updated);
 end
 
 function backupReloadFile(source, destination)
