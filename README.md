@@ -1,3 +1,14 @@
+# Simulink Testing v1.2.75
+
+## v1.2.75 — Remove referenced-model compile from Fast Restart MAT Reload
+
+- Fixed `Cannot call this API on the referenced model ... use the topmost model in the compiled hierarchy` during **Reload Testcase**: the MAT-only path no longer calls `load_system` / `get_param` / `feval(..., 'compile')` on the referenced model.
+- The MAT-only path now reads the existing `Simulink.SimulationData.Dataset` structure and updates **only existing scenario bus leaf timeseries** using Excel Value/Time. It checks Excel signal mapping against the stored Dataset, validates datatype/range/parameter values before writing, and preserves unselected scenarios.
+- A new/ambiguous signal, bus, or scenario is rejected with a clear instruction to use **Load Testcase to Harness**; the existing MAT remains unchanged.
+- The harness Fast Restart setting and Signal Editor parameters are untouched. Accept `stopped`, `initialized`, and `compiled`, but block active simulations.
+- A successful write verifies MAT content **on disk**. MATLAB's compiled Signal Editor cache reuse / refresh **is not guaranteed** by external MAT edits and requires a runtime simulation test.
+- Tests: Python static checks and standalone MATLAB regression fixture provided. MATLAB/Simulink is not available in this environment.
+
 # Simulink Testing v1.2.74
 
 ## v1.2.74 — Allow compiled Fast Restart state during Reload Testcase

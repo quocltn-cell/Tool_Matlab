@@ -19,7 +19,7 @@ arguments
     existingHarness (1,1) string = ""
 end
 
-toolVersion = "1.2.74";
+toolVersion = "1.2.75";
 if model == ""
     [model, excelFile] = selectHarnessFiles(toolVersion);
     if model == ""
@@ -32,11 +32,17 @@ if any(excelFile(:) ~= "")
     cases = readHarnessExcel(excelFile, commonFiles);
 end
 
-model = get_param(load_system(char(model)), 'Name');
+% A MAT-only Reload must NEVER load/compile/query the referenced model:
+% it can already be part of the harness's Fast Restart compiled hierarchy.
 if existingHarness ~= ""
-    info = reloadSignalEditor(model, existingHarness, cases, excelFile, toolVersion);
+    [~, sourceModelName] = fileparts(char(model));
+    if isempty(sourceModelName)
+        error('BusHarness:ModelName', 'Cannot identify the referenced model name.');
+    end
+    info = reloadSignalEditor(sourceModelName, existingHarness, cases, excelFile, toolVersion);
     return
 end
+model = get_param(load_system(char(model)), 'Name');
 if outputFolder == ""
     outputFolder = string(pwd);
 end
@@ -313,18 +319,9 @@ if getSimulinkBlockHandle(cut) < 0 || getSimulinkBlockHandle(editor) < 0 || ...
     error('BusHarness:Reload', 'The harness must have a Signal Editor and reference the selected model.');
 end
 
-dictionary = [];
-designData = [];
-dictionaryName = get_param(model, 'DataDictionary');
-if ~isempty(dictionaryName)
-    dictionary = Simulink.data.dictionary.open(dictionaryName);
-    designData = getSection(dictionary, 'Design Data');
-end
-[inputs, outputs] = inspectSourceModel(model, designData);
-busInputs = find(startsWith(string({inputs.Type}), "Bus:"));
-[scenarioData, labels, editorNames] = buildExcelScenarios(cases, inputs, outputs, ...
-    busInputs, dictionary, designData);
-
+% Build MAT changes from its existing Dataset schema, not from the compiled
+% referenced model. inspectSourceModel() calls feval(model, ..., 'compile')
+% and is only legal in the structural Build Harness path.
 oldScenario = get_param(editor, 'ActiveScenario');
 matFile = fullfile(folder, [harness '_Inputs.mat']);
 if ~isfile(matFile)
@@ -334,11 +331,7 @@ previous = load(matFile, oldScenario);
 if ~isfield(previous, oldScenario)
     error('BusHarness:Reload', 'The saved Signal Editor scenario "%s" is missing.', oldScenario);
 end
-existingNames = string(getElementNames(previous.(oldScenario)));
-if ~isequal(existingNames(:), string(editorNames(:)))
-    error('BusHarness:Reload', ...
-        'The Excel files change the Signal Editor bus interface. Use Build Harness for this change.');
-end
+[scenarioData, labels] = rebuildExistingMatScenarios(cases, matFile, previous.(oldScenario));
 % Upsert selected Excel test cases by Signal Editor scenario name.
 % Keep every unselected existing scenario untouched. A selected existing
 % scenario is replaced with new Excel data; a selected new scenario is added.
@@ -420,6 +413,161 @@ info = struct('ToolVersion', toolVersion, 'Harness', harness, 'HarnessFile', har
     'SignalEditorCacheVerified', false, ...
     'SimulationStatusAtReload', string(reloadStatus), ...
     'AddedScenarios', compatibility.Added, 'UpdatedScenarios', compatibility.Updated);
+end
+
+function [updates, labels] = rebuildExistingMatScenarios(cases, matFile, template)
+%REBUILDEXISTINGMATSCENARIOS Pure MAT/Excel data path: no model compilation.
+% The saved Dataset is the authoritative port/bus schema for MAT-only reload.
+% An unknown or ambiguous port/leaf is a structural change; reject it before
+% overwriting the original file rather than touching the compiled hierarchy.
+labels = harnessScenarioNames(string({cases.Name}));
+updates = struct;
+for c = 1:numel(cases)
+    name = char(labels(c));
+    saved = load(matFile, name);
+    if ~isfield(saved, name)
+        error('BusHarness:NewScenario', ...
+            'Testcase "%s" does not exist in the MAT file. Use Load Testcase to Harness.', name);
+    end
+    dataset = saved.(name);
+    if ~isa(dataset, 'Simulink.SimulationData.Dataset') || ...
+            ~isequal(string(getElementNames(dataset)), string(getElementNames(template)))
+        error('BusHarness:InterfaceChanged', ...
+            'Testcase "%s" has a different Dataset interface. Use Load Testcase to Harness.', name);
+    end
+    portNames = string(getElementNames(dataset));
+    rows = cases(c).Rows;
+    for r = 1:numel(rows)
+        row = rows(r);
+        [portIndex, leafPath] = findMatLeaf(dataset, portNames, row);
+        element = getElement(dataset, portIndex);
+        if isa(element, 'Simulink.SimulationData.Signal')
+            element.Values = replaceMatLeaf(element.Values, leafPath, row, cases(c));
+        else
+            element = replaceMatLeaf(element, leafPath, row, cases(c));
+        end
+        dataset = setElement(dataset, portIndex, element, char(portNames(portIndex)));
+    end
+    updates.(name) = dataset;
+end
+end
+
+function [portIndex, leafPath] = findMatLeaf(dataset, names, row)
+leafPath = string(row.Signal);
+bus = string(row.Bus);
+if startsWith(leafPath, bus + ".")
+    leafPath = extractAfter(leafPath, bus + ".");
+end
+if leafPath == ""
+    error('BusHarness:MATSignal', 'Excel row %d has an empty signal leaf.', row.Row);
+end
+isExpected = endsWith(names, "_Exp");
+possible = false(numel(names), 1);
+for n = 1:numel(names)
+    if (row.Type == "O") ~= isExpected(n)
+        continue
+    end
+    root = getElement(dataset, n);
+    if isa(root, 'Simulink.SimulationData.Signal')
+        root = root.Values;
+    end
+    possible(n) = hasMatLeaf(root, split(leafPath, "."));
+end
+matches = find(possible);
+if isempty(matches)
+    error('BusHarness:MATSignal', ...
+        'Excel row %d: signal "%s" (bus "%s") is not in the existing MAT interface. Use Load Testcase to Harness.', ...
+        row.Row, char(row.Signal), char(bus));
+end
+% Prefer the expected bus name, but never guess if two ports match.
+expectedName = bus;
+if row.Type == "O", expectedName = bus + "_Exp"; end
+preferred = matches(names(matches) == expectedName);
+if numel(preferred) == 1
+    portIndex = preferred;
+elseif numel(matches) == 1
+    portIndex = matches;
+else
+    error('BusHarness:MATSignalAmbiguous', ...
+        'Excel row %d: signal "%s" belongs to multiple MAT ports (%s). Use Load Testcase to Harness.', ...
+        row.Row, char(row.Signal), char(strjoin(names(matches), ', ')));
+end
+end
+
+function tf = hasMatLeaf(root, path)
+tf = false;
+for j = 1:numel(path)
+    key = char(path(j));
+    if ~isstruct(root) || ~isscalar(root) || ~isfield(root,key)
+        return
+    end
+    root = root.(key);
+end
+tf = isa(root,'timeseries');
+end
+
+function value = replaceMatLeaf(value, path, row, testcase)
+parts = split(path, ".");
+key = char(parts(1));
+if numel(parts) > 1
+    value.(key) = replaceMatLeaf(value.(key), strjoin(parts(2:end), "."), row, testcase);
+    return
+end
+ts = value.(key);
+if ~isa(ts, 'timeseries')
+    error('BusHarness:MATSignal', 'Excel row %d: "%s" is not an existing timeseries.', ...
+        row.Row, char(path));
+end
+% Aggregate all Excel changes for this leaf, not just the currently visited
+% row. This makes edited/removed time steps replace the previous waveform.
+allRows = testcase.Rows;
+matching = false(numel(allRows),1);
+for i = 1:numel(allRows)
+    candidate = allRows(i);
+    candidatePath = string(candidate.Signal);
+    if startsWith(candidatePath, string(candidate.Bus) + ".")
+        candidatePath = extractAfter(candidatePath, string(candidate.Bus) + ".");
+    end
+    matching(i) = candidate.Type == row.Type && ...
+        candidate.Bus == row.Bus && candidatePath == string(path);
+end
+changes = allRows(matching);
+changeTimes = reshape([changes.Time], [], 1);
+time = unique([0; changeTimes; double(testcase.DurationMs)/1000]);
+if numel(time) == 1
+    time(end+1,1) = time(1) + 1;
+end
+sample = getdatasamples(ts, 1);
+if isvector(sample)
+    data = repmat(reshape(sample,1,[]), numel(time), 1);
+else
+    data = repmat(sample, [ones(1,ndims(sample)), numel(time)]);
+end
+for i = 1:numel(changes)
+    try
+        newValue = excelValue(changes(i).Value, sample);
+        validateSignalValueRange(newValue, sample);
+        if numel(newValue) ~= 1 && numel(newValue) ~= numel(sample)
+            error('BusHarness:ValueDimensions', ...
+                'Expected %d element(s), received %d.',numel(sample),numel(newValue));
+        end
+        current = sample;
+        current(:) = newValue;
+    catch failure
+        error('BusHarness:ExcelValue', ...
+            'Testcase "%s", Excel row %d, signal "%s": %s', ...
+            char(testcase.Name), changes(i).Row, char(path), failure.message);
+    end
+    first = find(time >= changes(i).Time, 1);
+    if isvector(sample)
+        data(first:end,:) = repmat(reshape(current,1,[]), numel(time)-first+1, 1);
+    else
+        indices = repmat({':'}, 1, ndims(sample)+1);
+        indices{end} = first:numel(time);
+        data(indices{:}) = repmat(current, [ones(1,ndims(sample)), numel(time)-first+1]);
+    end
+end
+value.(key) = setinterpmethod(timeseries(data,time), 'zoh');
 end
 
 function backupReloadFile(source, destination)
