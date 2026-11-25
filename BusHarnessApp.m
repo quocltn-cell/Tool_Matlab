@@ -92,11 +92,11 @@ openButton = uibutton(actions, 'Text', 'Open Harness', ...
     'Tooltip', 'Open the latest harness, or choose an existing harness file', ...
     'ButtonPushedFcn', @openHarness);
 refreshExcelButton = uibutton(actions, 'Text', 'Reload Testcase', ...
-    'Tooltip', 'Re-read the Excel workbooks and refresh only the testcase list on the app', ...
+    'Tooltip', 'Refresh Excel testcases and automatically update compatible scenarios in the Signal Editor MAT', ...
     'ButtonPushedFcn', @reloadExcelPreview);
 reloadButton = uibutton(actions, 'Text', 'Load Testcase to Harness', 'Enable', 'off', ...
-    'Tooltip', 'Upsert checked Excel scenarios into the existing Signal Editor MAT file', ...
-    'ButtonPushedFcn', @(~, ~) processHarness(true));
+    'Tooltip', 'Rebuild the harness when testcase signals, datatypes or bus interfaces change', ...
+    'ButtonPushedFcn', @loadTestcaseToHarness);
 buildButton = uibutton(actions, 'Text', 'Build Harness', 'BackgroundColor', blue, ...
     'FontColor', [1 1 1], 'FontWeight', 'bold', 'ButtonPushedFcn', @(~, ~) processHarness(false));
 
@@ -664,28 +664,50 @@ updateProjectView();
     end
 
     function reloadExcelPreview(~, ~)
-        % Refresh only the app's File/Sheet/Case checklist. This must not
-        % create/rewrite the Signal Editor MAT file or touch the harness.
+        % A lightweight Excel refresh automatically updates existing MAT
+        % scenarios. Do not change the harness or create new scenarios here.
         if busy, return; end
-        setBusy(true);
-        cleanup = onCleanup(@() setBusy(false)); %#ok<NASGU>
         try
             if isempty(excelPaths)
                 error('BusHarnessApp:ExcelSelection', ...
-                    'Add at least one Test Case Excel file before reloading.');
+                    'Add at least one testcase Excel file before reloading.');
             end
             [count, failureText] = readTestcaseNames();
             if strlength(failureText) > 0
                 error('BusHarnessApp:ExcelPreview', '%s', char(failureText));
             end
-            buildLogArea.Value = {'Reload Testcase Successful'; ...
-                sprintf('Excel testcase(s) displayed: %d', count); ...
-                'Signal Editor MAT file: unchanged'};
-            statusLabel.Text = 'Excel testcase list refreshed';
+            harnessFile = string(savedHarnessFile());
+            if harnessFile == "" || ~isfile(harnessFile)
+                buildLogArea.Value = {'Reload Testcase Successful'; ...
+                    sprintf('Excel testcase(s) displayed: %d',count); ...
+                    'No harness exists yet: MAT unchanged. Use Build Harness first.'};
+                statusLabel.Text = 'Excel testcase list refreshed';
+                return
+            end
+            % Auto-update all existing scenarios irrespective of checkbox
+            % state. Checkbox selections are for full harness operations.
+            processHarness(true, true);
         catch failure
             buildLogArea.Value = {'Reload Testcase Failed'; ...
                 ['Error: ' failure.message]};
             statusLabel.Text = 'Reload Testcase failed';
+        end
+    end
+
+    function loadTestcaseToHarness(~, ~)
+        % Structural changes require a deliberate harness rebuild. This
+        % invalidates initialized Fast Restart and previous Test Manager
+        % iterations; never do so through the lightweight Reload button.
+        if busy, return; end
+        choice = uiconfirm(app, ...
+            ['Load Testcase to Harness rebuilds the harness from ALL Excel testcases. ' ...
+             'This may invalidate Fast Restart compiled state. ' ...
+             'After rebuilding, use Build Test to update Test Manager iterations. Continue?'], ...
+            'Rebuild Harness from Testcases', ...
+            'Options',{'Rebuild','Cancel'},'DefaultOption','Cancel', ...
+            'CancelOption','Cancel');
+        if strcmp(choice,'Rebuild')
+            processHarness(false, true);
         end
     end
 
@@ -788,12 +810,17 @@ updateProjectView();
         buildLogArea.Value = [string(buildLogArea.Value(:)); lines(:)];
     end
 
-    function processHarness(reload)
+    function processHarness(reload, updateAll)
+        if nargin < 2
+            updateAll = false;
+        end
         if busy
             return
         end
         % Reset Build Log for each button press; no paths/version/debug text.
         if reload
+            operation = "Reload Testcase";
+        elseif updateAll
             operation = "Load Testcase to Harness";
         else
             operation = "Build Harness";
@@ -806,6 +833,34 @@ updateProjectView();
                 selected = string({pendingCatalog(mask).Name})';
             end
         catch
+        end
+        if reload && updateAll
+            % Update all existing MAT scenarios, but never add scenarios or
+            % silently modify the interface through the fast reload path.
+            currentMatNames = importedScenarioNames();
+            try
+                [excelNames, ~] = readHarnessExcelNames(excelPaths);
+                excelNames = reshape(string(excelNames),[],1);
+                availableNames = harnessScenarioNames(excelNames);
+                selected = excelNames(ismember(availableNames,currentMatNames));
+            catch failure
+                buildLogArea.Value = {'Reload Testcase Failed'; ...
+                    ['Error: ' failure.message]};
+                statusLabel.Text = 'Reload Testcase failed';
+                return
+            end
+        elseif ~reload && updateAll
+            % A structural rebuild must preserve every Excel testcase;
+            % never discard unchecked scenarios during reconstruction.
+            try
+                [selected, ~] = readHarnessExcelNames(excelPaths);
+                selected = reshape(string(selected),[],1);
+            catch failure
+                buildLogArea.Value = {'Load Testcase to Harness Failed'; ...
+                    ['Error: ' failure.message]};
+                statusLabel.Text = 'Load Testcase to Harness failed';
+                return
+            end
         end
         total = numel(selected);
         buildLogArea.Value = {char(operation + " in progress...")};
@@ -826,7 +881,7 @@ updateProjectView();
                 requireFile(f, [".xlsx", ".xls", ".xlsm"], 'Excel');
             end
             if total == 0
-                error('BusHarnessApp:ImportSelection', 'Select at least one testcase in testcase load.');
+                error('BusHarnessApp:ImportSelection', 'No compatible existing testcase is available for this operation. Build Harness or use Load Testcase to Harness.');
             end
             if isempty(which('createBusTestHarness'))
                 error('BusHarnessApp:ToolMissing', 'createBusTestHarness.m is not on the MATLAB path.');
@@ -884,9 +939,21 @@ updateProjectView();
                 writeProject(projectFile, project);
             end
             if reload
-                buildLogArea.Value = {char(sprintf('Load Testcase to Harness Successful')); ...
-                    char(sprintf('Testcase reload successful: %d', total)); ...
-                    'Testcase reload fail: 0'};
+                buildLogArea.Value = {'Reload Testcase Successful'; ...
+                    sprintf('MAT scenarios updated: %d', total); ...
+                    'Harness model: unchanged'; ...
+                    'Fast Restart setting: unchanged'};
+                [excelNames, ~] = readHarnessExcelNames(excelPaths);
+                addedExcel = reshape(string(excelNames),[],1);
+                addedExcel = addedExcel(~ismember(addedExcel,selected));
+                if ~isempty(addedExcel)
+                    buildLogArea.Value = [buildLogArea.Value; ...
+                        {sprintf('%d new Excel testcase(s) not imported into MAT. Use Load Testcase to Harness.',numel(addedExcel))}];
+                end
+            elseif updateAll
+                buildLogArea.Value = {'Load Testcase to Harness Successful'; ...
+                    sprintf('Harness rebuilt with %d testcase(s)',total); ...
+                    'Use Build Test to refresh Test Manager iterations.'};
             else
                 buildLogArea.Value = {'Build Harness Successful'; ...
                     char(sprintf('Testcase import successful: %d', total)); ...
@@ -909,12 +976,12 @@ updateProjectView();
             % Current implementation imports the selected testcases as one
             % atomic batch. On failure it does not claim partial successes.
             if reload
-                buildLogArea.Value = {'Load Testcase to Harness Failed'; ...
-                    'Testcase reload successful: 0'; ...
-                    char(sprintf('Testcase reload fail: %d', total)); ...
+                buildLogArea.Value = {'Reload Testcase Failed'; ...
+                    'MAT update successful: 0'; ...
+                    char(sprintf('MAT update fail: %d', total)); ...
                     ['Error: ' failure.message]};
             else
-                buildLogArea.Value = {'Build Harness Failed'; ...
+                buildLogArea.Value = {char(operation + " Failed"); ...
                     'Testcase import successful: 0'; ...
                     char(sprintf('Testcase import fail: %d', total)); ...
                     ['Error: ' failure.message]};

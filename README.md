@@ -1,3 +1,13 @@
+# Simulink Testing v1.2.72
+
+## v1.2.72 — Reload Testcase automatically updates MAT
+
+- **Reload Testcase** refreshes the Excel File/Sheet/Testcase list and automatically updates every already-imported scenario in the Signal Editor MAT using current Excel Value/Time. No checkbox selection is required for this fast path.
+- The MAT-only path validates signal names, datatypes, dimensions and bus structure before writing; it preserves the harness model, existing unselected MAT scenarios and its Fast Restart setting. New scenarios are not imported automatically; the Build Log identifies that a structural import is needed.
+- **Load Testcase to Harness** now explicitly asks for confirmation before rebuilding the harness with **all Excel testcases**. Rebuild is reserved for structural changes and requires Build Test afterward to refresh iterations.
+- If no harness exists, Reload Testcase only refreshes the Excel list and directs the user to Build Harness.
+- Actual Signal Editor MAT cache refresh and compile reuse between separate Test Manager runs require MATLAB runtime testing.
+
 # Simulink Testing v1.2.71
 
 ## v1.2.71 — Repair testcase MAT reload with Fast Restart on/off
