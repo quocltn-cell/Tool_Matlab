@@ -1,8 +1,18 @@
+# Simulink Testing v1.2.74
+
+## v1.2.74 — Allow compiled Fast Restart state during Reload Testcase
+
+- MAT-only Reload Testcase permits `SimulationStatus` `stopped`, `initialized`, and `compiled`, checking both before and after loading the harness.
+- Active states such as `running`, `paused`, `initializing`, and `stopping` remain blocked.
+- Does not change Signal Editor block parameters, the harness model, or its Fast Restart setting.
+- The updated MAT values are verified on disk, but an already-compiled Signal Editor's in-memory data cache is **not** verified. Run Test output must be checked to confirm new Value/Time was consumed.
+- No MATLAB/Simulink runtime test has been performed in this environment.
+
 # Simulink Testing v1.2.73
 
 ## v1.2.73 — Reload MAT while Fast Restart is initialized
 
-- **Reload Testcase** permits MAT-only updates when the harness `SimulationStatus` is `stopped` **or `initialized`**. Other simulation states (running, paused, initializing, etc.) are blocked with the exact state in Build Log.
+- **Reload Testcase** permits MAT-only updates when the harness `SimulationStatus` is `stopped`, `initialized`, or `compiled`. Other simulation states (running, paused, initializing, etc.) are blocked with the exact state in Build Log.
 - Reload preserves the loaded harness, its FastRestart setting, Signal Editor `Filename` and `ActiveScenario`; it does not call `set_param` or `save_system` to force a MAT reload.
 - After atomic MAT replacement, verify the *actual saved Dataset values* for each updated scenario. On a verification/write error, restore the previous MAT backup.
 - Build Log distinguishes **verified MAT values on disk** from **unverified Signal Editor runtime cache**. An initialized model may still use cached data; the next simulation output must be checked before relying on it.

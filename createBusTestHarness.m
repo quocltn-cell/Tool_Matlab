@@ -19,7 +19,7 @@ arguments
     existingHarness (1,1) string = ""
 end
 
-toolVersion = "1.2.73";
+toolVersion = "1.2.74";
 if model == ""
     [model, excelFile] = selectHarnessFiles(toolVersion);
     if model == ""
@@ -285,23 +285,23 @@ if bdIsLoaded(harness)
         error('BusHarness:Reload', ...
             'A different model with the harness name is loaded. Close it and retry.');
     end
-    % Fast Restart can leave the model 'initialized' between simulations.
-    % MAT-only Value/Time updates are permitted in that state; changing
+    % Fast Restart can leave the model 'initialized' or 'compiled' between simulations.
+    % MAT-only Value/Time updates are permitted in those states; changing
     % a block parameter or the model is deliberately NOT attempted here.
     % Other states, including paused and running, are not safe to update.
     simStatus = char(get_param(harness, 'SimulationStatus'));
-    if ~any(strcmpi(simStatus, {'stopped','initialized'}))
+    if ~any(strcmpi(simStatus, {'stopped','initialized','compiled'}))
         error('BusHarness:ReloadBusy', ...
             ['Harness "%s" has SimulationStatus="%s". ' ...
              'Finish the active simulation before Reload Testcase. ' ...
-             'An initialized Fast Restart session does not need to be disabled.'], ...
+             'A compiled/initialized Fast Restart session does not need to be disabled.'], ...
             harness, simStatus);
     end
 end
 load_system(harnessFile);
 % Recheck after load_system in case another callback changed the state.
 reloadStatus = char(get_param(harness, 'SimulationStatus'));
-if ~any(strcmpi(reloadStatus, {'stopped','initialized'}))
+if ~any(strcmpi(reloadStatus, {'stopped','initialized','compiled'}))
     error('BusHarness:ReloadBusy', ...
         'Harness "%s" is "%s". Stop the active simulation before Reload Testcase.', ...
         harness, reloadStatus);
