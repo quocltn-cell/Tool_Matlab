@@ -19,7 +19,7 @@ arguments
     existingHarness (1,1) string = ""
 end
 
-toolVersion = "1.2.70";
+toolVersion = "1.2.71";
 if model == ""
     [model, excelFile] = selectHarnessFiles(toolVersion);
     if model == ""
@@ -277,10 +277,18 @@ if ~found
 end
 harnessFile = attributes.Name;
 [folder, harness] = fileparts(harnessFile);
-if bdIsLoaded(harness) && (~strcmpi(get_param(harness, 'FileName'), harnessFile) || ...
-        strcmp(get_param(harness, 'Dirty'), 'on') || ...
-        ~strcmp(get_param(harness, 'SimulationStatus'), 'stopped'))
-    error('BusHarness:Reload', 'Save harness changes and stop simulation before reloading.');
+if bdIsLoaded(harness)
+    % This operation only updates the Signal Editor MAT file. An unsaved
+    % model is not a reason to reject a data-only update, and we never save
+    % or modify the loaded harness to perform this operation.
+    if ~strcmpi(get_param(harness, 'FileName'), harnessFile)
+        error('BusHarness:Reload', ...
+            'A different model with the harness name is loaded. Close it and retry.');
+    end
+    if ~strcmpi(get_param(harness, 'SimulationStatus'), 'stopped')
+        error('BusHarness:Reload', ...
+            'Stop the running simulation before updating the Signal Editor MAT file. Fast Restart may remain on.');
+    end
 end
 load_system(harnessFile);
 cut = [harness '/Model Under Test'];
@@ -341,56 +349,42 @@ if ~any(labels == string(active))
     active = char(labels(1));
 end
 
+% Stage and validate the full MAT contents before replacing the live file.
+% The harness block Filename remains unchanged for both FR on and off.
 staged = [tempname(folder) '.mat'];
 cleanup = onCleanup(@() removeReloadBackup(staged)); %#ok<NASGU>
 save(staged, '-struct', 'scenarioData');
+checkSaved = whos('-file', staged);
+savedMask = strcmp({checkSaved.class}, 'Simulink.SimulationData.Dataset');
+savedNames = string({checkSaved(savedMask).name});
+if ~all(ismember(labels, savedNames))
+    error('BusHarness:StagedMAT', 'Staged MAT is missing one or more scenarios. Original MAT was not changed.');
+end
 matBackup = [tempname(folder) '.mat'];
-harnessBackup = [tempname(folder) '.slx'];
 backupReloadFile(matFile, matBackup);
 try
-    backupReloadFile(harnessFile, harnessBackup);
-catch failure
-    removeReloadBackup(matBackup);
-    rethrow(failure);
-end
-wasOpen = strcmp(get_param(harness, 'Open'), 'on');
-try
-    % For compatible MAT-only changes, do not alter model block parameters
-    % while Fast Restart is enabled: doing so can discard the compiled model.
-    % Test Manager selects a Signal Editor scenario at simulation start.
-    % Never promise that a separate Test Manager run reuses the old snapshot.
-    keepFastRestart = strcmpi(get_param(harness,'FastRestart'),'on');
-    if keepFastRestart
-        backupReloadFile(staged, matFile);
-        % Refresh active scenario selection through the supported parameter.
-        % The MAT path remains unchanged; no save_system on the harness.
-        set_param(editor,'ActiveScenario',active);
-    else
-        % When Fast Restart is off, force the block to bind to the updated
-        % MAT file; this is the existing conservative refresh mechanism.
-        set_param(editor, 'Filename', staged);
-        backupReloadFile(staged, matFile);
-        set_param(editor, 'Filename', matFile);
-        set_param(editor, 'ActiveScenario', active);
-        save_system(harness);
+    % Do not change Filename, ActiveScenario or other block/model parameters.
+    % set_param during Fast Restart may fail or invalidate the initialized
+    % model. Refreshing the MAT cache for the next simulation depends on
+    % Signal Editor/Test Manager runtime; writing a file alone cannot
+    % guarantee compiled-state reuse or an in-memory cache refresh.
+    backupReloadFile(staged, matFile);
+    checkWritten = whos('-file', matFile);
+    writtenMask = strcmp({checkWritten.class}, 'Simulink.SimulationData.Dataset');
+    writtenNames = string({checkWritten(writtenMask).name});
+    if ~all(ismember(labels, writtenNames))
+        error('BusHarness:MATVerification', 'Updated MAT is missing scenarios after writing.');
     end
 catch failure
     try
-        close_system(harness, 0);
         backupReloadFile(matBackup, matFile);
-        backupReloadFile(harnessBackup, harnessFile);
-        removeReloadBackup(matBackup);
-        removeReloadBackup(harnessBackup);
-        if wasOpen
-            open_system(harnessFile);
-        end
     catch restoreFailure
         failure = addCause(failure, restoreFailure);
     end
+    removeReloadBackup(matBackup);
     rethrow(failure);
 end
 removeReloadBackup(matBackup);
-removeReloadBackup(harnessBackup);
 info = struct('ToolVersion', toolVersion, 'Harness', harness, 'HarnessFile', harnessFile, ...
     'ScenarioFile', matFile, 'SignalEditor', editor, 'ExcelFile', excelFile, ...
     'Scenarios', labels, 'ExpectedOutputs', [], ...

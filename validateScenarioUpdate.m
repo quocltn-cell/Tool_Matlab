@@ -1,5 +1,5 @@
 function summary = validateScenarioUpdate(matFile, updates)
-%VALIDATESCENARIOUPDATE Guard Signal Editor MAT updates for Fast Restart.
+%VALIDATESCENARIOUPDATE Validate MAT-only scenario updates for Fast Restart.
 %   The compatibility check intentionally ignores Time and number of time
 %   samples. It compares scenario port names/order and the class and
 %   per-sample dimensions of every nested signal. It does not guarantee that
@@ -12,7 +12,8 @@ if ~isfile(matFile)
     error('SimulinkTesting:MissingMAT','Signal Editor MAT file is missing: %s',matFile);
 end
 vars = whos('-file',char(matFile));
-existing = string({vars(strcmp({vars.class},'Simulink.SimulationData.Dataset')).name);
+datasetMask = strcmp({vars.class}, 'Simulink.SimulationData.Dataset');
+existing = string({vars(datasetMask).name});
 existing = existing(:);
 if isempty(existing)
     error('SimulinkTesting:NoScenarios','MAT file contains no Signal Editor Dataset scenarios.');

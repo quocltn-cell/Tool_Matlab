@@ -1,6 +1,16 @@
-# Simulink Testing v1.2.70
+# Simulink Testing v1.2.71
 
-## v1.2.70 — Smart Fast Restart-compatible testcase MAT updates
+## v1.2.71 — Repair testcase MAT reload with Fast Restart on/off
+
+- Fix syntax error in `validateScenarioUpdate.m` when finding Dataset variables.
+- `Load Testcase to Harness` updates the existing Signal Editor MAT without changing `Filename`, `ActiveScenario`, or saving the harness, for either Fast Restart setting.
+- Allow MAT-only updates when the harness is dirty, but reject an actively running simulation.
+- Stage and validate the new MAT; retain a backup and restore the original MAT if writing or validation fails.
+- Do not claim the model reuses compilation or refreshes previously cached signal data across independent Test Manager runs; verify the new values in the next simulation. If the running/initialized environment caches old MAT data, finish the Fast Restart session before restarting the test.
+
+# Simulink Testing v1.2.71
+
+## v1.2.71 — Smart Fast Restart-compatible testcase MAT updates
 
 - **Load Testcase to Harness** checks the incoming Signal Editor Dataset scenarios against the current MAT file **before** writing data. A change limited to Time / Value / number of samples is accepted if bus field names, types, per-sample dimensions, and Dataset port names/order remain the same. Incompatible changes abort with the exact signal path and instructions to **Build Harness**, leaving the original MAT file intact.
 - MAT updates are staged and backed up. When harness `FastRestart=on`, the import updates its MAT file **without changing the Signal Editor filename or saving/rebuilding the harness**. When Fast Restart is off, the previous conservative filename-rebind path is retained. These behaviors aim to avoid unnecessary recompilation, not to override Simulink's own compile decisions.
