@@ -1,3 +1,15 @@
+# Simulink Testing v1.2.76
+
+## v1.2.76 — One merged Excel workbook per project
+
+- Build Harness, Reload Testcase and Load Testcase to Harness write to the **same** `Input/Testcases_Merged.xlsx` instead of a separate `<source>_<sheet>_Merged[_N].xlsx` file per source worksheet/run.
+- All selected source worksheets are combined as **separate sheets inside the one workbook**. This preserves multi-file/multi-sheet testcases and the duplicate-testcase-name checks in `readHarnessExcel`.
+- Sheets receive stable collision-free names like `S001_Sheet1`, `S002_Sheet2`, etc., based on source reading order. Only sheets containing selected testcases are included.
+- The workbook is written to a temporary file and replaced at the fixed path only after every sheet succeeds. Source Excel files are never modified.
+- After a successful harness/MAT operation, legacy generated merge files corresponding to the input source sheets are cleaned from the project Input folder. Other Excel files are untouched.
+- MAT-only Reload and Fast Restart behavior is otherwise unchanged; external MAT changes may still not be automatically reflected in the Signal Editor compiled cache.
+- Requires MATLAB/Simulink runtime testing; static checks are provided.
+
 # Simulink Testing v1.2.75
 
 ## v1.2.75 — Remove referenced-model compile from Fast Restart MAT Reload
