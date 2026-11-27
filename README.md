@@ -1,3 +1,20 @@
+# Simulink Testing v1.2.77
+
+## v1.2.77 — Dynamic Value formulas in Excel testcases
+
+The **Value** column for a scalar numeric input (`Type = I`) now supports two narrowly defined formulas (entered as Excel **text**, not a calculated Excel cell):
+
+- `= 0.4*CurrentTime`: at simulation time `t` seconds, Value = `0.4*t`.
+- `= 0.4*EnableTime`: starting at the update row's elapsed `Time(ms)` time `t0`, Value = `0.4*(t-t0)`; at activation it starts at zero.
+
+A later row assigning the same signal another number, Base Workspace parameter, or formula **replaces the previous formula immediately**. All Time(ms) values are interpreted as consecutive durations; formula clocks and waveform samples use seconds. Input waveforms are discretized using the harness **FixedStep** and merged with the original Excel event times, with zero-order-hold interpolation. This is precomputed timeseries data in Signal Editor MAT; it is *not* a new Simulink MATLAB expression/evaluator block.
+
+Formula values are range checked **before** casting; integer, boolean, enum, bus-array, non-scalar, or otherwise unsupported signals reject invalid updates. Unsupported or unsafe expressions (e.g., `= sin(CurrentTime)` or `= eval(...)`) are rejected; Excel cells must be stored as text (for example choose Text format or prefix an apostrophe when entering). A limit of 250,000 fixed-step samples per testcase protects against very large MAT files.
+
+Both **Build Harness** and **Reload Testcase** use the same parsing, time grid, type/range checks, and formula override semantics. Existing Fast Restart behavior is unchanged: disk MAT verification does not guarantee the initialized Signal Editor cache reloaded.
+
+`tests/test_time_formula.m` contains runnable MATLAB checks for parsing and time grid; `tests/check_time_formulas.py` performs source-level regression checks. MATLAB/Simulink integration has **not** been executed in this environment.
+
 # Simulink Testing v1.2.76
 
 ## v1.2.76 — One merged Excel workbook per project

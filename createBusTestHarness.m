@@ -19,7 +19,7 @@ arguments
     existingHarness (1,1) string = ""
 end
 
-toolVersion = "1.2.76";
+toolVersion = "1.2.77";
 if model == ""
     [model, excelFile] = selectHarnessFiles(toolVersion);
     if model == ""
@@ -137,7 +137,7 @@ try
     if ~isempty(cases)
         [scenarioData, scenarioLabels, scenarioNames, expectedNames, expectedTypes, ...
             expectedModelPorts, verifyRules] = ...
-            buildExcelScenarios(cases, inputs, outputs, busInputs, dictionary, designData);
+            buildExcelScenarios(cases, inputs, outputs, busInputs, dictionary, designData, sourceStep);
     else
         scenarioNames = matlab.lang.makeUniqueStrings(cellstr(inputNames(busInputs)));
         Scenario = Simulink.SimulationData.Dataset;
@@ -331,7 +331,8 @@ previous = load(matFile, oldScenario);
 if ~isfield(previous, oldScenario)
     error('BusHarness:Reload', 'The saved Signal Editor scenario "%s" is missing.', oldScenario);
 end
-[scenarioData, labels] = rebuildExistingMatScenarios(cases, matFile, previous.(oldScenario));
+[scenarioData, labels] = rebuildExistingMatScenarios(cases, matFile, previous.(oldScenario), ...
+    str2double(get_param(harness, 'FixedStep')));
 % Upsert selected Excel test cases by Signal Editor scenario name.
 % Keep every unselected existing scenario untouched. A selected existing
 % scenario is replaced with new Excel data; a selected new scenario is added.
@@ -415,7 +416,7 @@ info = struct('ToolVersion', toolVersion, 'Harness', harness, 'HarnessFile', har
     'AddedScenarios', compatibility.Added, 'UpdatedScenarios', compatibility.Updated);
 end
 
-function [updates, labels] = rebuildExistingMatScenarios(cases, matFile, template)
+function [updates, labels] = rebuildExistingMatScenarios(cases, matFile, template, fixedStep)
 %REBUILDEXISTINGMATSCENARIOS Pure MAT/Excel data path: no model compilation.
 % The saved Dataset is the authoritative port/bus schema for MAT-only reload.
 % An unknown or ambiguous port/leaf is a structural change; reject it before
@@ -442,9 +443,9 @@ for c = 1:numel(cases)
         [portIndex, leafPath] = findMatLeaf(dataset, portNames, row);
         element = getElement(dataset, portIndex);
         if isa(element, 'Simulink.SimulationData.Signal')
-            element.Values = replaceMatLeaf(element.Values, leafPath, row, cases(c));
+            element.Values = replaceMatLeaf(element.Values, leafPath, row, cases(c), fixedStep);
         else
-            element = replaceMatLeaf(element, leafPath, row, cases(c));
+            element = replaceMatLeaf(element, leafPath, row, cases(c), fixedStep);
         end
         dataset = setElement(dataset, portIndex, element, char(portNames(portIndex)));
     end
@@ -506,11 +507,11 @@ end
 tf = isa(root,'timeseries');
 end
 
-function value = replaceMatLeaf(value, path, row, testcase)
+function value = replaceMatLeaf(value, path, row, testcase, fixedStep)
 parts = split(path, ".");
 key = char(parts(1));
 if numel(parts) > 1
-    value.(key) = replaceMatLeaf(value.(key), strjoin(parts(2:end), "."), row, testcase);
+    value.(key) = replaceMatLeaf(value.(key), strjoin(parts(2:end), "."), row, testcase, fixedStep);
     return
 end
 ts = value.(key);
@@ -533,7 +534,8 @@ for i = 1:numel(allRows)
 end
 changes = allRows(matching);
 changeTimes = reshape([changes.Time], [], 1);
-time = unique([0; changeTimes; double(testcase.DurationMs)/1000]);
+time = testcaseFormulaTimeline([0; changeTimes; double(testcase.DurationMs)/1000], ...
+    changes, fixedStep);
 if numel(time) == 1
     time(end+1,1) = time(1) + 1;
 end
@@ -545,21 +547,41 @@ else
 end
 for i = 1:numel(changes)
     try
-        newValue = excelValue(changes(i).Value, sample);
-        validateSignalValueRange(newValue, sample);
-        if numel(newValue) ~= 1 && numel(newValue) ~= numel(sample)
-            error('BusHarness:ValueDimensions', ...
-                'Expected %d element(s), received %d.',numel(sample),numel(newValue));
+        [dynamicFormula, coefficient, clock] = testcaseTimeFormula(changes(i).Value);
+        if dynamicFormula
+            if changes(i).Type ~= "I"
+                error('BusHarness:TimeFormulaInputOnly', ...
+                    'Time formulas are supported only for input (I) signals.');
+            end
+            if ~isscalar(sample) || ~(isnumeric(sample) || islogical(sample))
+                error('BusHarness:TimeFormulaType', ...
+                    'Time formulas require a scalar numeric input signal.');
+            end
+            formulaValue = coefficient * time(find(time >= changes(i).Time,1):end);
+            if strcmpi(clock, 'EnableTime')
+                formulaValue = coefficient * ...
+                    (time(find(time >= changes(i).Time,1):end) - changes(i).Time);
+            end
+            validateSignalValueRange(formulaValue, sample);
+        else
+            newValue = excelValue(changes(i).Value, sample);
+            validateSignalValueRange(newValue, sample);
+            if numel(newValue) ~= 1 && numel(newValue) ~= numel(sample)
+                error('BusHarness:ValueDimensions', ...
+                    'Expected %d element(s), received %d.',numel(sample),numel(newValue));
+            end
+            current = sample;
+            current(:) = newValue;
         end
-        current = sample;
-        current(:) = newValue;
     catch failure
         error('BusHarness:ExcelValue', ...
             'Testcase "%s", Excel row %d, signal "%s": %s', ...
             char(testcase.Name), changes(i).Row, char(path), failure.message);
     end
     first = find(time >= changes(i).Time, 1);
-    if isvector(sample)
+    if dynamicFormula
+        data(first:end,1) = cast(formulaValue, 'like', sample);
+    elseif isvector(sample)
         data(first:end,:) = repmat(reshape(current,1,[]), numel(time)-first+1, 1);
     else
         indices = repmat({':'}, 1, ndims(sample)+1);
@@ -651,7 +673,7 @@ end
 end
 
 function [scenarioData, labels, editorNames, expectedNames, expectedTypes, ...
-        expectedPorts, rules] = buildExcelScenarios(cases, inputs, outputs, busInputs, dictionary, designData)
+        expectedPorts, rules] = buildExcelScenarios(cases, inputs, outputs, busInputs, dictionary, designData, fixedStep)
 expectedPorts = [];
 inputPort = false(numel(inputs),1);
 inputPort(busInputs) = true;
@@ -703,7 +725,8 @@ labels = harnessScenarioNames(string({cases.Name}));
 scenarioData = struct;
 for c = 1:numel(cases)
     rows = cases(c).Rows;
-    time = unique([0; reshape([rows.Time], [], 1); cases(c).DurationMs / 1000]);
+    time = testcaseFormulaTimeline([0; reshape([rows.Time], [], 1); ...
+        cases(c).DurationMs / 1000], rows, fixedStep);
     if numel(time) == 1
         time(end+1,1) = 1;
     end
@@ -845,15 +868,35 @@ updates = updates([updates.Signal] == path);
 for k = 1:numel(updates)
     update = updates(k);
     try
-        requested = excelValue(update.Value, sample);
-        validateSignalValueRange(requested, sample);
-        sample(:) = requested;
+        [dynamicFormula, coefficient, clock] = testcaseTimeFormula(update.Value);
+        if dynamicFormula
+            if update.Type ~= "I"
+                error('BusHarness:TimeFormulaInputOnly', ...
+                    'Time formulas are supported only for input (I) signals.');
+            end
+            if ~isscalar(sample) || ~(isnumeric(sample) || islogical(sample))
+                error('BusHarness:TimeFormulaType', ...
+                    'Time formulas require a scalar numeric input signal.');
+            end
+            from = find(time >= update.Time, 1);
+            formulaValue = coefficient * time(from:end);
+            if strcmpi(clock, 'EnableTime')
+                formulaValue = coefficient * (time(from:end) - update.Time);
+            end
+            validateSignalValueRange(formulaValue, sample);
+        else
+            requested = excelValue(update.Value, sample);
+            validateSignalValueRange(requested, sample);
+            sample(:) = requested;
+        end
     catch failure
         error('BusHarness:ExcelValue', 'Excel row %d: invalid Value for "%s". %s', ...
             update.Row, char(path), failure.message);
     end
-    from = find(time == update.Time, 1);
-    if isscalar(element.Dimensions)
+    from = find(time >= update.Time, 1);
+    if dynamicFormula
+        data(from:end,1) = cast(formulaValue, 'like', sample);
+    elseif isscalar(element.Dimensions)
         data(from:end,:) = repmat(reshape(sample, 1, []), numel(time)-from+1, 1);
     else
         shape = [ones(1, numel(element.Dimensions)), numel(time)-from+1];
