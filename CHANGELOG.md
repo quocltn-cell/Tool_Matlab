@@ -2,6 +2,11 @@
 
 Significant changes are recorded here in [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style and versions follow [SemVer](https://semver.org/).
 
+## [1.2.81] - 2026-11-28
+
+### Fixed
+- Fix cursor slider position and Output drag-to-zoom gestures
+
 ## [1.2.80] - 2026-11-28
 
 ### Changed

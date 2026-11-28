@@ -62,8 +62,8 @@ for mode = 1:2
         'ColumnSpacing',8);
     uilabel(position,'Text','Cursor (seconds)');
     cursor = uislider(position,'Limits',[0 1],'Value',0,'MajorTicks',[], ...
-        'ValueChangingFcn',@(~,evt) changeCursor(mode,evt.Value), ...
-        'ValueChangedFcn',@(~,~) changeCursor(mode,cursor.Value));
+        'ValueChangingFcn',@(~,evt) sliderChanging(mode,evt), ...
+        'ValueChangedFcn',@(src,evt) sliderChanged(mode,src,evt));
     cursorTime = uieditfield(position,'numeric','Value',0, ...
         'Tooltip','Enter a time in seconds and press Enter', ...
         'ValueChangedFcn',@(src,~) changeCursor(mode,src.Value));
@@ -101,7 +101,8 @@ for mode = 1:2
         'Diagnostic',diagnosticLabel, ...
         'Traces',{{}},'Markers',{{}},'Readouts',{{}},'CurrentSignals',[], ...
         'Axes',{{}},'DataYLimits',zeros(0,2),'FullXLim',[0 1], ...
-        'FocusedAxis',1,'Focus',focusLabel,'ZoomMode',zoomPicker,'Pointer','Cursor');
+        'FocusedAxis',1,'Focus',focusLabel,'ZoomMode',zoomPicker,'Pointer','Cursor', ...
+        'CursorValue',0);
 end
 viewer.refresh = @refresh;
 viewer.setResults = @setResults;
@@ -601,6 +602,9 @@ dragState = struct('Active',false,'Mode',0,'Axis',[], ...
                 ax.GridAlpha = 0.45;
                 ax.Layer = 'bottom';
                 ax.Toolbar.Visible = 'off';
+                % Built-in axes pan/zoom can consume mouse gestures before
+                % our drag-to-zoom callbacks, particularly on Output plots.
+                disableDefaultInteractivity(ax);
                 ax.ButtonDownFcn = @(~,evt) clickAxis(mode,evt,ax);
                 plotStep = 'plotting waveform';
                 % Draw waveform data first. Optional comparison highlights or
@@ -637,7 +641,7 @@ dragState = struct('Active',false,'Mode',0,'Axis',[], ...
                     % A failed equality overlay is nonfatal; keep both traces.
                     if hasModel && hasExpect
                         try
-                            drawMatching(ax,s);
+                            drawMatching(ax,s,@(~,~) clickAxis(mode,[],ax));
                         catch overlayError
                             warning('SimulinkTesting:ComparisonOverlay', ...
                                 'Green matching overlay skipped for %s: %s', ...
@@ -734,6 +738,7 @@ dragState = struct('Active',false,'Mode',0,'Axis',[], ...
             end
         end
         v.Cursor.Limits = [plotStart plotEnd];
+        v.CursorValue = plotStart;
         v.Cursor.Value = plotStart;
         v.CursorTime.Value = plotStart;
         if ~isempty(failures)
@@ -939,7 +944,7 @@ dragState = struct('Active',false,'Mode',0,'Axis',[], ...
             limits = xlim(v.Axes{selected});
             factor = 0.5;
             if strcmp(kind,'out'), factor = 2; end
-            centered = v.Cursor.Value;
+            centered = v.CursorValue;
             newX = scaleXWithin(limits,v.FullXLim,centered,factor, ...
                 validSampleTime(state.SampleTime));
             setSharedX(mode,newX);
@@ -975,23 +980,44 @@ dragState = struct('Active',false,'Mode',0,'Axis',[], ...
                 v.Markers{index}.YData = ylim(v.Axes{index});
             end
         end
-        changeCursor(mode,v.Cursor.Value);
+        changeCursor(mode,v.CursorValue);
     end
 
-    function changeCursor(mode,t,snapToSample)
-        % Both slider and typed time use the fundamental sample period (s).
-        % For example, Ts=0.01: 0.02 is a valid tick; 0.023 -> 0.02.
-        % For Ts=0.1: 0.02 -> 0.0 (no sample exists at 0.02).
-        if nargin < 3, snapToSample = true; end
-        snapToSample = true; %#ok<NASGU> % single stepping policy in Data tab
+    function sliderChanging(mode,evt)
+        % MathWorks: Slider.Value is NOT updated during ValueChangingFcn.
+        % Never assign Slider.Value here, or the thumb can jump to its old
+        % position (typically the start of the testcase, t=0).
+        changeCursor(mode,evt.Value,false);
+    end
+
+    function sliderChanged(mode,src,evt)
+        % Commit only on mouse release. The event's Value reflects the
+        % user's final thumb position even if src.Value was temporarily stale.
+        t = double(src.Value);
+        try
+            if isprop(evt,'Value') && isscalar(evt.Value) && isfinite(evt.Value)
+                t = double(evt.Value);
+            end
+        catch
+        end
+        changeCursor(mode,t,true);
+    end
+
+    function changeCursor(mode,t,commitSlider)
+        % Snap the indicator/readouts to the same fundamental sample grid.
+        % Intermediate slider events only move the plot indicator and text;
+        % they must not write back to the slider being dragged.
+        if nargin < 3, commitSlider = true; end
         v = views{mode};
         if ~isscalar(t) || ~isnumeric(t) || ~isfinite(t), return; end
         t = min(max(double(t),v.Cursor.Limits(1)),v.Cursor.Limits(2));
-        if snapToSample
-            t = alignTimeToSample(t,v.Cursor.Limits,state.SampleTime);
-        end
+        t = alignTimeToSample(t,v.Cursor.Limits,state.SampleTime);
         t = min(max(t,v.Cursor.Limits(1)),v.Cursor.Limits(2));
-        v.Cursor.Value = t;
+        v.CursorValue = t;
+        views{mode} = v;
+        if commitSlider
+            v.Cursor.Value = t;
+        end
         v.CursorTime.Value = t;
         if isempty(v.CurrentSignals), return; end
         for k = 1:numel(v.Markers)
@@ -1270,7 +1296,7 @@ name = regexprep(char(name),'\.+','.');
 name = string(regexprep(name,'^\.|\.$',''));
 end
 
-function drawMatching(ax,s)
+function drawMatching(ax,s,onClick)
 if isempty(s.ModelTime) || isempty(s.ExpectTime), return; end
 % Strict equality over the recorded discrete samples. Green is NOT a pass
 % verdict: Test Assessment might apply different time and type semantics.
@@ -1281,7 +1307,8 @@ for i=1:numel(t)-1
     b = sampleAt(s.ExpectTime,s.ExpectData,t(i));
     if isfinite(a) && isfinite(b) && isequal(a,b)
         line(ax,[t(i) t(i+1)],[a a],'Color',[0.12 0.66 0.30], ...
-            'LineWidth',2.4,'HitTest','off');
+            'LineWidth',2.4,'HitTest','on', ...
+            'PickableParts','visible','ButtonDownFcn',onClick);
     end
 end
 end

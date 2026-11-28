@@ -17,7 +17,7 @@ assert 'v.FocusedAxis = index;' in s
 assert "v.Axes{end+1} = ax;" in s
 assert "v.DataYLimits(end+1,:) = fullY;" in s
 assert "v.FullXLim = [plotStart plotEnd];" in s
-assert 'changeCursor(mode,v.Cursor.Value);' in s
+assert 'changeCursor(mode,v.CursorValue);' in s
 assert 'v.Markers{index}.YData = ylim(v.Axes{index});' in s
 assert 'trace.ButtonDownFcn = @(~,~) clickAxis(mode,[],ax);' in s
 assert 'v.Cursor.Limits = [plotStart plotEnd];' in s
