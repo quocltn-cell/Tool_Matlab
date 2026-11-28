@@ -1,7 +1,7 @@
 """Regression checks for MAT-only reload of an already compiled hierarchy."""
 from pathlib import Path
 s=(Path(__file__).resolve().parents[1]/'createBusTestHarness.m').read_text()
-assert 'toolVersion = "1.2.77"' in s
+assert 'toolVersion = simulinkTestingVersion();' in s
 head=s.split('function info = reloadSignalEditor',1)[0]
 assert head.index('if existingHarness ~= ""') < head.index("model = get_param(load_system(char(model)), 'Name');")
 reload=s.split('function info = reloadSignalEditor',1)[1].split('function backupReloadFile',1)[0]

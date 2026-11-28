@@ -4,7 +4,7 @@ root = Path(__file__).resolve().parents[1]
 src = (root / 'createBusTestHarness.m').read_text(encoding='utf-8')
 parser = (root / 'testcaseTimeFormula.m').read_text(encoding='utf-8')
 grid = (root / 'testcaseFormulaTimeline.m').read_text(encoding='utf-8')
-assert 'toolVersion = "1.2.77"' in src
+assert 'toolVersion = simulinkTestingVersion();' in src
 assert 'rebuildExistingMatScenarios(cases, matFile, previous.(oldScenario)' in src
 assert "str2double(get_param(harness, 'FixedStep'))" in src
 assert 'time = testcaseFormulaTimeline(' in src
