@@ -1,6 +1,17 @@
+# Simulink Testing v1.2.79
+
+## v1.2.79 — Drag-to-zoom pointer modes and SDI Fit shortcuts
+
+- **Data → Input** and **Data → Output** share a dropdown with **Cursor**, **Zoom In**, **Zoom Time**, **Zoom Y**. In a zoom mode, click and drag across a waveform to select a region; a translucent selection rectangle previews the region.
+- **Zoom In** selects both X and Y; X is synchronized on all shown subplots, Y affects only the chosen subplot. **Zoom Time** only selects X and updates all subplots. **Zoom Y** only selects Y on the chosen subplot.
+- **Zoom Out** remains a one-click action, centered at the current time cursor. **Fit [ ]** / Space resets time and Y across plots; **Fit X** / Ctrl+Alt+T resets time only; **Fit Y** / Ctrl+Alt+Y resets Y on the focused subplot.
+- Click a subplot/trace to focus it. Cursor mode retains the prior sample-time-snapped cursor behavior. **Esc** cancels an active drag.
+- Existing top-level Project-menu mouse movement handler is temporarily suspended during drag, and restored at mouse-up. Shortcuts for unrelated application actions are passed through.
+- Added static drag regression and an interactive MATLAB test checklist. **Not tested with MATLAB runtime** in this environment.
+
 # Simulink Testing v1.2.78
 
-## v1.2.78 — SDI-like zoom and fit tools in Data Input / Output
+## v1.2.78 — SDI-like zoom and fit tools in Data Input / Output (superseded by v1.2.79)
 
 - Added **Zoom In**, **Zoom Out**, **Zoom Time** and **Zoom Y** to both waveform viewers in Data tab.
 - Added **Fit to view**, **Fit to view in time**, and **Fit selected subplot to view in Y** in a Fit options dropdown.

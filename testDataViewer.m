@@ -67,31 +67,30 @@ for mode = 1:2
     cursorTime = uieditfield(position,'numeric','Value',0, ...
         'Tooltip','Enter a time in seconds and press Enter', ...
         'ValueChangedFcn',@(src,~) changeCursor(mode,src.Value));
-    % SDI-like navigation. X is synchronized between all plotted signals;
-    % Y zoom/fit affects only the focused subplot (click an axis or trace).
+    % SDI-style drag tools. Selection mode is independent for each tab.
+    % Mouse drag outlines the area; fit commands do not depend on mode.
     zoomBar = uigridlayout(rightGrid,[1 6], ...
-        'ColumnWidth',{82,84,102,84,'1x',145}, ...
+        'ColumnWidth',{162,92,70,82,82,'1x'}, ...
         'Padding',[0 0 0 0],'ColumnSpacing',4);
-    uibutton(zoomBar,'Text','Zoom In','Tooltip', ...
-        'Zoom both time and Y around the cursor on the selected subplot', ...
-        'ButtonPushedFcn',@(~,~) changeZoom(mode,'in'));
-    uibutton(zoomBar,'Text','Zoom Out','Tooltip', ...
-        'Zoom out in time and Y on the selected subplot', ...
+    zoomPicker = uidropdown(zoomBar,'Items', ...
+        {'Cursor','Zoom In','Zoom Time','Zoom Y'},'Value','Cursor', ...
+        'Tooltip','Choose a pointer: drag a rectangle for Zoom In, horizontal range for Zoom Time, or vertical range for Zoom Y', ...
+        'ValueChangedFcn',@(src,~) changePointerMode(mode,src.Value));
+    uibutton(zoomBar,'Text','- Zoom Out', ...
+        'Tooltip','Zoom out by 2x; uses the current time cursor and selected subplot', ...
         'ButtonPushedFcn',@(~,~) changeZoom(mode,'out'));
-    uibutton(zoomBar,'Text','Zoom Time','Tooltip', ...
-        'Zoom in time (X) on all displayed subplots', ...
-        'ButtonPushedFcn',@(~,~) changeZoom(mode,'time'));
-    uibutton(zoomBar,'Text','Zoom Y','Tooltip', ...
-        'Zoom in Y on the selected subplot', ...
-        'ButtonPushedFcn',@(~,~) changeZoom(mode,'y'));
-    fitMenu = uidropdown(zoomBar,'Items',{'Fit options...', ...
-        'Fit to view','Fit to view in time', ...
-        'Fit selected subplot to view in Y'}, ...
-        'Value','Fit options...', ...
-        'ValueChangedFcn',@(src,~) selectFitOption(mode,src));
-    focusLabel = uilabel(zoomBar,'Text','Selected: first plot', ...
+    uibutton(zoomBar,'Text','Fit [ ]', ...
+        'Tooltip','Fit to view (Space)', ...
+        'ButtonPushedFcn',@(~,~) fitView(mode,'all'));
+    uibutton(zoomBar,'Text','Fit X', ...
+        'Tooltip','Fit to view in time (Ctrl+Alt+T)', ...
+        'ButtonPushedFcn',@(~,~) fitView(mode,'x'));
+    uibutton(zoomBar,'Text','Fit Y', ...
+        'Tooltip','Fit selected subplot to view in Y (Ctrl+Alt+Y)', ...
+        'ButtonPushedFcn',@(~,~) fitView(mode,'y'));
+    focusLabel = uilabel(zoomBar,'Text','Cursor | plot 1', ...
         'FontColor',ink,'FontSize',10, ...
-        'Tooltip','Click a waveform to select its subplot for Y zoom / fit');
+        'Tooltip','Select a subplot by clicking it; drag to zoom using the chosen pointer');
     diagnosticLabel = uilabel(rightGrid,'Text','Select a testcase to display its signals.', ...
         'FontColor',ink,'FontSize',11);
     scroll = uigridlayout(rightGrid,[1 1],'Scrollable','on', ...
@@ -102,12 +101,22 @@ for mode = 1:2
         'Diagnostic',diagnosticLabel, ...
         'Traces',{{}},'Markers',{{}},'Readouts',{{}},'CurrentSignals',[], ...
         'Axes',{{}},'DataYLimits',zeros(0,2),'FullXLim',[0 1], ...
-        'FocusedAxis',1,'Focus',focusLabel,'FitMenu',fitMenu);
+        'FocusedAxis',1,'Focus',focusLabel,'ZoomMode',zoomPicker,'Pointer','Cursor');
 end
 viewer.refresh = @refresh;
 viewer.setResults = @setResults;
 viewer.clear = @clearAll;
 viewer.setExcelInputs = @setExcelInputs;
+% Hotkeys are scoped to this app figure; existing keyboard handler is
+% preserved and invoked for keys the viewer does not handle.
+viewerFigure = ancestor(parent,'figure');
+priorKeyHandler = viewerFigure.WindowKeyPressFcn;
+viewerFigure.WindowKeyPressFcn = @handleZoomKey;
+% While dragging we temporarily replace the existing app mouse-move
+% callback (Project menu hover). Restore it immediately on mouse up.
+dragState = struct('Active',false,'Mode',0,'Axis',[], ...
+    'Start',[0 0],'Rectangle',[], 'MotionCallback',[], 'UpCallback',[]);
+
 
     function clearAll()
         state.Names = strings(0,1);
@@ -447,7 +456,7 @@ viewer.setExcelInputs = @setExcelInputs;
         v.CurrentSignals = [];
         v.Axes = {}; v.DataYLimits = zeros(0,2);
         v.FocusedAxis = 1; v.FullXLim = [0 1];
-        v.Focus.Text = 'Selected: first plot';
+        v.Focus.Text = char(string(v.Pointer) + ' | plot 1');
         views{mode} = v;
         if (mode == 1 && isempty(v.Cases.Data)) || ...
                 (mode == 2 && isempty(v.Cases.Data))
@@ -600,7 +609,7 @@ viewer.setExcelInputs = @setExcelInputs;
                 if mode == 1
                     [x,y] = scalarWaveform(s.Time,s.Data);
                     trace = stairs(ax,x,y,'Color',[0.1 0.37 0.9],'LineWidth',1.5);
-                    trace.ButtonDownFcn = @(~,~) selectAxis(mode,ax);
+                    trace.ButtonDownFcn = @(~,~) clickAxis(mode,[],ax);
                     dataY = [dataY; double(y(:))];
                     endTime = max(endTime,max(x));
                 else
@@ -608,7 +617,7 @@ viewer.setExcelInputs = @setExcelInputs;
                     if ~isempty(s.ModelTime) && ~isempty(s.ModelData)
                         [x,y] = scalarWaveform(s.ModelTime,s.ModelData);
                         trace = stairs(ax,x,y,'Color',[0.88 0.18 0.17],'LineWidth',1.5);
-                        trace.ButtonDownFcn = @(~,~) selectAxis(mode,ax);
+                        trace.ButtonDownFcn = @(~,~) clickAxis(mode,[],ax);
                         dataY = [dataY; double(y(:))];
                         endTime = max(endTime,max(x));
                         hasModel = true;
@@ -616,7 +625,7 @@ viewer.setExcelInputs = @setExcelInputs;
                     if ~isempty(s.ExpectTime) && ~isempty(s.ExpectData)
                         [x,y] = scalarWaveform(s.ExpectTime,s.ExpectData);
                         trace = stairs(ax,x,y,'Color',[0.57 0.25 0.75],'LineWidth',1.5);
-                        trace.ButtonDownFcn = @(~,~) selectAxis(mode,ax);
+                        trace.ButtonDownFcn = @(~,~) clickAxis(mode,[],ax);
                         dataY = [dataY; double(y(:))];
                         endTime = max(endTime,max(x));
                         hasExpect = true;
@@ -713,7 +722,7 @@ viewer.setExcelInputs = @setExcelInputs;
         end
         v.FullXLim = [plotStart plotEnd];
         v.FocusedAxis = 1;
-        v.Focus.Text = sprintf('Selected: 1/%d',plotted);
+        v.Focus.Text = sprintf('%s | plot 1/%d',char(v.Pointer),plotted);
         views{mode} = v;
         for axidx=1:numel(v.Markers)
             marker = v.Markers{axidx};
@@ -756,47 +765,169 @@ viewer.setExcelInputs = @setExcelInputs;
     function clickAxis(mode,evt,ax)
         try
             selectAxis(mode,ax);
-            t = evt.IntersectionPoint(1);
-            changeCursor(mode,t);
-        catch
+            v = views{mode};
+            if strcmp(v.Pointer,'Cursor')
+                if ~isempty(evt) && isprop(evt,'IntersectionPoint')
+                    point = evt.IntersectionPoint;
+                else
+                    point = ax.CurrentPoint(1,:);
+                end
+                changeCursor(mode,point(1));
+            else
+                startZoomDrag(mode,ax);
+            end
+        catch issue
+            warning('SimulinkTesting:ZoomPointer', '%s', issue.message);
         end
     end
 
     function selectAxis(mode,ax)
-        % Keep focus independent for the Input and Output viewers.
         v = views{mode};
         for index = 1:numel(v.Axes)
             if isgraphics(v.Axes{index}) && isequal(v.Axes{index},ax)
                 v.FocusedAxis = index;
-                v.Focus.Text = sprintf('Selected: %d/%d',index,numel(v.Axes));
+                v.Focus.Text = sprintf('%s | plot %d/%d',char(v.Pointer), ...
+                    index,numel(v.Axes));
                 views{mode} = v;
                 return
             end
         end
     end
 
-    function selectFitOption(mode,menu)
-        selection = char(menu.Value);
-        menu.Value = 'Fit options...';  % reselecting the same fit must work
+    function changePointerMode(mode,pointer)
+        if dragState.Active, endZoomDrag(false); end
+        v = views{mode};
+        v.Pointer = char(pointer);
+        v.Focus.Text = sprintf('%s | plot %d/%d',char(pointer), ...
+            v.FocusedAxis,max(1,numel(v.Axes)));
+        views{mode} = v;
+    end
+
+    function startZoomDrag(mode,ax)
+        if dragState.Active, endZoomDrag(false); end
+        if ~isgraphics(ax), return; end
+        point = ax.CurrentPoint(1,1:2);
+        if any(~isfinite(point)), return; end
+        pointer = views{mode}.Pointer;
+        if strcmp(pointer,'Cursor'), return; end
+        % Clamp to the currently visible plot. The preview is a patch with
+        % mouse hit-testing disabled so it cannot steal the drag events.
+        point = clipPointToAxes(ax,point);
+        rect = patch(ax, ...
+            'XData',point(1)*ones(1,4), 'YData',point(2)*ones(1,4), ...
+            'FaceColor',[0.23 0.47 0.95],'FaceAlpha',0.13, ...
+            'EdgeColor',[0.14 0.33 0.78],'LineWidth',1.1, ...
+            'HitTest','off','PickableParts','none');
+        dragState.Active = true;
+        dragState.Mode = mode;
+        dragState.Axis = ax;
+        dragState.Start = point;
+        dragState.Rectangle = rect;
+        dragState.MotionCallback = viewerFigure.WindowButtonMotionFcn;
+        dragState.UpCallback = viewerFigure.WindowButtonUpFcn;
+        viewerFigure.WindowButtonMotionFcn = @moveZoomDrag;
+        viewerFigure.WindowButtonUpFcn = @(~,~) endZoomDrag(true);
+        moveZoomDrag();
+    end
+
+    function moveZoomDrag(varargin)
+        if ~dragState.Active || ~isgraphics(dragState.Axis), return; end
+        ax = dragState.Axis;
+        point = clipPointToAxes(ax,ax.CurrentPoint(1,1:2));
+        if any(~isfinite(point)), return; end
+        a = dragState.Start;
+        x = sort([a(1),point(1)]);
+        y = sort([a(2),point(2)]);
+        pointer = views{dragState.Mode}.Pointer;
+        if strcmp(pointer,'Zoom Time'), y = ylim(ax); end
+        if strcmp(pointer,'Zoom Y'), x = xlim(ax); end
+        if isgraphics(dragState.Rectangle)
+            dragState.Rectangle.XData = [x(1) x(2) x(2) x(1)];
+            dragState.Rectangle.YData = [y(1) y(1) y(2) y(2)];
+        end
+    end
+
+    function endZoomDrag(apply)
+        if ~dragState.Active, return; end
+        % Always restore the app's original handlers, even on invalid drag.
+        viewerFigure.WindowButtonMotionFcn = dragState.MotionCallback;
+        viewerFigure.WindowButtonUpFcn = dragState.UpCallback;
+        ax = dragState.Axis;
+        mode = dragState.Mode;
+        startPoint = dragState.Start;
+        rect = dragState.Rectangle;
+        dragState.Active = false;
+        if isgraphics(rect), delete(rect); end
+        if ~apply || ~isgraphics(ax), return; end
+        point = clipPointToAxes(ax,ax.CurrentPoint(1,1:2));
+        if any(~isfinite(point)), return; end
+        pointer = views{mode}.Pointer;
+        dx = abs(point(1)-startPoint(1));
+        dy = abs(point(2)-startPoint(2));
+        % Ignore clicks/no-movement and avoid axis limits collapsing to zero.
+        % Require ~1% of the displayed axis extent in each selected axis.
+        xSpan = diff(xlim(ax)); ySpan = diff(ylim(ax));
+        zoomX = ~strcmp(pointer,'Zoom Y');
+        zoomY = ~strcmp(pointer,'Zoom Time');
+        if (zoomX && dx < xSpan*0.01) || (zoomY && dy < ySpan*0.01)
+            return
+        end
+        if zoomX
+            setSharedX(mode,sort([startPoint(1),point(1)]));
+        end
+        if zoomY
+            ylim(ax,sort([startPoint(2),point(2)]));
+        end
+        refreshZoomCursors(mode);
+    end
+
+    function fitView(mode,dimension)
+        if dragState.Active, endZoomDrag(false); end
         v = views{mode};
         if isempty(v.Axes), return; end
-        switch selection
-            case 'Fit to view'
-                setSharedX(mode,v.FullXLim);
-                for index = 1:numel(v.Axes)
-                    if isgraphics(v.Axes{index})
-                        ylim(v.Axes{index},v.DataYLimits(index,:));
-                    end
-                end
-            case 'Fit to view in time'
-                setSharedX(mode,v.FullXLim);
-            case 'Fit selected subplot to view in Y'
-                index = min(max(1,v.FocusedAxis),numel(v.Axes));
+        if strcmp(dimension,'all') || strcmp(dimension,'x')
+            setSharedX(mode,v.FullXLim);
+        end
+        if strcmp(dimension,'all')
+            for index = 1:numel(v.Axes)
                 if isgraphics(v.Axes{index})
                     ylim(v.Axes{index},v.DataYLimits(index,:));
                 end
+            end
+        elseif strcmp(dimension,'y')
+            index = min(max(1,v.FocusedAxis),numel(v.Axes));
+            if isgraphics(v.Axes{index})
+                ylim(v.Axes{index},v.DataYLimits(index,:));
+            end
         end
         refreshZoomCursors(mode);
+    end
+
+    function handleZoomKey(src,evt)
+        % Same Fit shortcuts shown in the user's Simulink Data Inspector.
+        try
+            key = lower(char(evt.Key));
+            modifiers = string(evt.Modifier);
+            ctrlAlt = any(strcmpi(modifiers,'control')) && ...
+                any(strcmpi(modifiers,'alt'));
+            mode = 1;
+            if strcmp(tabs.SelectedTab,outTab), mode = 2; end
+            if strcmp(key,'space') && isempty(modifiers)
+                fitView(mode,'all'); return
+            elseif ctrlAlt && strcmp(key,'t')
+                fitView(mode,'x'); return
+            elseif ctrlAlt && strcmp(key,'y')
+                fitView(mode,'y'); return
+            elseif strcmp(key,'escape') && dragState.Active
+                endZoomDrag(false); return
+            end
+        catch issue
+            warning('SimulinkTesting:ZoomHotkeys','%s',issue.message);
+        end
+        % Do not suppress unrelated shortcuts from the parent application.
+        if isa(priorKeyHandler,'function_handle')
+            priorKeyHandler(src,evt);
+        end
     end
 
     function changeZoom(mode,kind)
@@ -880,6 +1011,13 @@ viewer.setExcelInputs = @setExcelInputs;
             end
         end
     end
+end
+
+function result = clipPointToAxes(ax,point)
+% Prevent mouse release outside the plot from producing invalid limits.
+xl = xlim(ax); yl = ylim(ax);
+result = [min(max(point(1),xl(1)),xl(2)), ...
+          min(max(point(2),yl(1)),yl(2))];
 end
 
 function [tStart,tEnd,found] = scenarioInputTimeline(file,caseName)
