@@ -1,3 +1,14 @@
+# Simulink Testing v1.2.78
+
+## v1.2.78 — SDI-like zoom and fit tools in Data Input / Output
+
+- Added **Zoom In**, **Zoom Out**, **Zoom Time** and **Zoom Y** to both waveform viewers in Data tab.
+- Added **Fit to view**, **Fit to view in time**, and **Fit selected subplot to view in Y** in a Fit options dropdown.
+- Click a waveform or subplot background to focus it. X-axis navigation is synchronized across visible subplots **within the selected tab**. Y navigation affects only the focused subplot, except Fit to view, which resets Y for every subplot.
+- Zoom uses the cursor position as its X center, within the full testcase input time span. Fit Y uses actual waveform data, not the cursor marker or labels.
+- Cursor time, sample-time snapping, Model/Expect waveform colors, matching overlays, and existing input/output signal selection remain unchanged.
+- Static regression check: `python tests/check_zoom_controls.py`. An interactive MATLAB/Simulink test is still required.
+
 # Simulink Testing v1.2.77
 
 ## v1.2.77 — Dynamic Value formulas in Excel testcases

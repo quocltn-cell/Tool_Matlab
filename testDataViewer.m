@@ -40,7 +40,7 @@ for mode = 1:2
             'CellEditCallback',@(~,evt) selectOutputCase(evt));
     end
     right = uipanel(main,'Title','Signals and Waveforms');
-    rightGrid = uigridlayout(right,[5 1],'RowHeight',{29,112,26,22,'1x'}, ...
+    rightGrid = uigridlayout(right,[6 1],'RowHeight',{29,112,26,32,22,'1x'}, ...
         'Padding',[8 7 8 7],'RowSpacing',4);
     signalSearch = uieditfield(rightGrid,'text','Placeholder','Filter signals...', ...
         'ValueChangedFcn',@(~,~) render(mode));
@@ -67,6 +67,31 @@ for mode = 1:2
     cursorTime = uieditfield(position,'numeric','Value',0, ...
         'Tooltip','Enter a time in seconds and press Enter', ...
         'ValueChangedFcn',@(src,~) changeCursor(mode,src.Value));
+    % SDI-like navigation. X is synchronized between all plotted signals;
+    % Y zoom/fit affects only the focused subplot (click an axis or trace).
+    zoomBar = uigridlayout(rightGrid,[1 6], ...
+        'ColumnWidth',{82,84,102,84,'1x',145}, ...
+        'Padding',[0 0 0 0],'ColumnSpacing',4);
+    uibutton(zoomBar,'Text','Zoom In','Tooltip', ...
+        'Zoom both time and Y around the cursor on the selected subplot', ...
+        'ButtonPushedFcn',@(~,~) changeZoom(mode,'in'));
+    uibutton(zoomBar,'Text','Zoom Out','Tooltip', ...
+        'Zoom out in time and Y on the selected subplot', ...
+        'ButtonPushedFcn',@(~,~) changeZoom(mode,'out'));
+    uibutton(zoomBar,'Text','Zoom Time','Tooltip', ...
+        'Zoom in time (X) on all displayed subplots', ...
+        'ButtonPushedFcn',@(~,~) changeZoom(mode,'time'));
+    uibutton(zoomBar,'Text','Zoom Y','Tooltip', ...
+        'Zoom in Y on the selected subplot', ...
+        'ButtonPushedFcn',@(~,~) changeZoom(mode,'y'));
+    fitMenu = uidropdown(zoomBar,'Items',{'Fit options...', ...
+        'Fit to view','Fit to view in time', ...
+        'Fit selected subplot to view in Y'}, ...
+        'Value','Fit options...', ...
+        'ValueChangedFcn',@(src,~) selectFitOption(mode,src));
+    focusLabel = uilabel(zoomBar,'Text','Selected: first plot', ...
+        'FontColor',ink,'FontSize',10, ...
+        'Tooltip','Click a waveform to select its subplot for Y zoom / fit');
     diagnosticLabel = uilabel(rightGrid,'Text','Select a testcase to display its signals.', ...
         'FontColor',ink,'FontSize',11);
     scroll = uigridlayout(rightGrid,[1 1],'Scrollable','on', ...
@@ -75,7 +100,9 @@ for mode = 1:2
         'SignalList',signalList, ...
         'SignalSearch',signalSearch,'Cursor',cursor,'CursorTime',cursorTime,'Scroll',scroll, ...
         'Diagnostic',diagnosticLabel, ...
-        'Traces',{{}},'Markers',{{}},'Readouts',{{}},'CurrentSignals',[]);
+        'Traces',{{}},'Markers',{{}},'Readouts',{{}},'CurrentSignals',[], ...
+        'Axes',{{}},'DataYLimits',zeros(0,2),'FullXLim',[0 1], ...
+        'FocusedAxis',1,'Focus',focusLabel,'FitMenu',fitMenu);
 end
 viewer.refresh = @refresh;
 viewer.setResults = @setResults;
@@ -418,6 +445,9 @@ viewer.setExcelInputs = @setExcelInputs;
         delete(v.Scroll.Children);
         v.Traces = {}; v.Markers = {}; v.Readouts = {};
         v.CurrentSignals = [];
+        v.Axes = {}; v.DataYLimits = zeros(0,2);
+        v.FocusedAxis = 1; v.FullXLim = [0 1];
+        v.Focus.Text = 'Selected: first plot';
         views{mode} = v;
         if (mode == 1 && isempty(v.Cases.Data)) || ...
                 (mode == 2 && isempty(v.Cases.Data))
@@ -562,25 +592,32 @@ viewer.setExcelInputs = @setExcelInputs;
                 ax.GridAlpha = 0.45;
                 ax.Layer = 'bottom';
                 ax.Toolbar.Visible = 'off';
-                ax.ButtonDownFcn = @(~,evt) clickAxis(mode,evt);
+                ax.ButtonDownFcn = @(~,evt) clickAxis(mode,evt,ax);
                 plotStep = 'plotting waveform';
                 % Draw waveform data first. Optional comparison highlights or
                 % cursor labels must NEVER prevent the actual output plot.
+                dataY = zeros(0,1);
                 if mode == 1
                     [x,y] = scalarWaveform(s.Time,s.Data);
-                    stairs(ax,x,y,'Color',[0.1 0.37 0.9],'LineWidth',1.5);
+                    trace = stairs(ax,x,y,'Color',[0.1 0.37 0.9],'LineWidth',1.5);
+                    trace.ButtonDownFcn = @(~,~) selectAxis(mode,ax);
+                    dataY = [dataY; double(y(:))];
                     endTime = max(endTime,max(x));
                 else
                     hasModel = false; hasExpect = false;
                     if ~isempty(s.ModelTime) && ~isempty(s.ModelData)
                         [x,y] = scalarWaveform(s.ModelTime,s.ModelData);
-                        stairs(ax,x,y,'Color',[0.88 0.18 0.17],'LineWidth',1.5);
+                        trace = stairs(ax,x,y,'Color',[0.88 0.18 0.17],'LineWidth',1.5);
+                        trace.ButtonDownFcn = @(~,~) selectAxis(mode,ax);
+                        dataY = [dataY; double(y(:))];
                         endTime = max(endTime,max(x));
                         hasModel = true;
                     end
                     if ~isempty(s.ExpectTime) && ~isempty(s.ExpectData)
                         [x,y] = scalarWaveform(s.ExpectTime,s.ExpectData);
-                        stairs(ax,x,y,'Color',[0.57 0.25 0.75],'LineWidth',1.5);
+                        trace = stairs(ax,x,y,'Color',[0.57 0.25 0.75],'LineWidth',1.5);
+                        trace.ButtonDownFcn = @(~,~) selectAxis(mode,ax);
+                        dataY = [dataY; double(y(:))];
                         endTime = max(endTime,max(x));
                         hasExpect = true;
                     end
@@ -600,6 +637,8 @@ viewer.setExcelInputs = @setExcelInputs;
                     end
                 end
                 plotStep = 'creating cursor';
+                fullY = paddedSignalY(dataY);
+                ylim(ax,fullY);
                 yl = ylim(ax);
                 if any(~isfinite(yl)) || yl(1)==yl(2), yl = [0 1]; end
                 marker = line(ax,[0 0],yl,'Color',[0.15 0.18 0.22], ...
@@ -623,6 +662,8 @@ viewer.setExcelInputs = @setExcelInputs;
                         char(string(s.Name)),labelError.message);
                     readout = {[],[]};
                 end
+                v.Axes{end+1} = ax;
+                v.DataYLimits(end+1,:) = fullY;
                 v.Markers{end+1} = marker;
                 v.Readouts{end+1} = readout;
                 goodSignals(end+1,1) = s; %#ok<AGROW>
@@ -670,6 +711,10 @@ viewer.setExcelInputs = @setExcelInputs;
         if plotEnd <= plotStart
             plotEnd = plotStart + max(validSampleTime(state.SampleTime),1e-9);
         end
+        v.FullXLim = [plotStart plotEnd];
+        v.FocusedAxis = 1;
+        v.Focus.Text = sprintf('Selected: 1/%d',plotted);
+        views{mode} = v;
         for axidx=1:numel(v.Markers)
             marker = v.Markers{axidx};
             if ~isempty(marker) && isvalid(marker)
@@ -708,12 +753,98 @@ viewer.setExcelInputs = @setExcelInputs;
             'VerticalAlignment','top');
     end
 
-    function clickAxis(mode,evt)
+    function clickAxis(mode,evt,ax)
         try
+            selectAxis(mode,ax);
             t = evt.IntersectionPoint(1);
             changeCursor(mode,t);
         catch
         end
+    end
+
+    function selectAxis(mode,ax)
+        % Keep focus independent for the Input and Output viewers.
+        v = views{mode};
+        for index = 1:numel(v.Axes)
+            if isgraphics(v.Axes{index}) && isequal(v.Axes{index},ax)
+                v.FocusedAxis = index;
+                v.Focus.Text = sprintf('Selected: %d/%d',index,numel(v.Axes));
+                views{mode} = v;
+                return
+            end
+        end
+    end
+
+    function selectFitOption(mode,menu)
+        selection = char(menu.Value);
+        menu.Value = 'Fit options...';  % reselecting the same fit must work
+        v = views{mode};
+        if isempty(v.Axes), return; end
+        switch selection
+            case 'Fit to view'
+                setSharedX(mode,v.FullXLim);
+                for index = 1:numel(v.Axes)
+                    if isgraphics(v.Axes{index})
+                        ylim(v.Axes{index},v.DataYLimits(index,:));
+                    end
+                end
+            case 'Fit to view in time'
+                setSharedX(mode,v.FullXLim);
+            case 'Fit selected subplot to view in Y'
+                index = min(max(1,v.FocusedAxis),numel(v.Axes));
+                if isgraphics(v.Axes{index})
+                    ylim(v.Axes{index},v.DataYLimits(index,:));
+                end
+        end
+        refreshZoomCursors(mode);
+    end
+
+    function changeZoom(mode,kind)
+        v = views{mode};
+        if isempty(v.Axes), return; end
+        selected = min(max(1,v.FocusedAxis),numel(v.Axes));
+        if ~isgraphics(v.Axes{selected}), return; end
+        if strcmp(kind,'in') || strcmp(kind,'out') || strcmp(kind,'time')
+            limits = xlim(v.Axes{selected});
+            factor = 0.5;
+            if strcmp(kind,'out'), factor = 2; end
+            centered = v.Cursor.Value;
+            newX = scaleXWithin(limits,v.FullXLim,centered,factor, ...
+                validSampleTime(state.SampleTime));
+            setSharedX(mode,newX);
+        end
+        if strcmp(kind,'in') || strcmp(kind,'out') || strcmp(kind,'y')
+            ax = v.Axes{selected};
+            factor = 0.5;
+            if strcmp(kind,'out'), factor = 2; end
+            currentY = ylim(ax);
+            centerY = mean(currentY);
+            halfSpan = max(diff(currentY)*factor/2, ...
+                max(abs(centerY),1)*1e-12);
+            ylim(ax,[centerY-halfSpan centerY+halfSpan]);
+        end
+        refreshZoomCursors(mode);
+    end
+
+    function setSharedX(mode,limits)
+        v = views{mode};
+        for index = 1:numel(v.Axes)
+            if isgraphics(v.Axes{index})
+                xlim(v.Axes{index},limits);
+            end
+        end
+    end
+
+    function refreshZoomCursors(mode)
+        % Resizing axes must also resize the visible cursor line and its
+        % readouts. Do not change the global cursor slider's time range.
+        v = views{mode};
+        for index = 1:numel(v.Markers)
+            if isgraphics(v.Markers{index}) && isgraphics(v.Axes{index})
+                v.Markers{index}.YData = ylim(v.Axes{index});
+            end
+        end
+        changeCursor(mode,v.Cursor.Value);
     end
 
     function changeCursor(mode,t,snapToSample)
@@ -1030,4 +1161,35 @@ a = lower(replace(string(datasetName),"/","."));
 b = lower(replace(string(excelName),"/","."));
 yes = a == b || endsWith(a,"."+b);
 % Some generated datasets add Input or Signal prefixes; only full path suffix.
+end
+
+function limits = paddedSignalY(values)
+% Fit only numeric waveform samples, excluding cursor lines and tags.
+values = double(values(:));
+values = values(isfinite(values));
+if isempty(values)
+    limits = [0 1]; return
+end
+lo = min(values); hi = max(values);
+span = hi-lo;
+if span <= 0
+    span = max(abs(lo)*0.1,1);
+end
+pad = span*0.06;
+limits = [lo-pad hi+pad];
+end
+
+function limits = scaleXWithin(current,full,center,factor,sampleStep)
+% Keep time zoom synchronized and constrained to the testcase timeline.
+full = double(full(:)');
+current = double(current(:)');
+if any(~isfinite([full current])) || full(2)<=full(1)
+    limits = full; return
+end
+fullSpan = diff(full);
+minSpan = max(min(sampleStep,fullSpan),fullSpan*1e-9);
+newSpan = min(fullSpan,max(minSpan,diff(current)*factor));
+center = min(max(center,full(1)),full(2));
+left = max(full(1),min(center-newSpan/2,full(2)-newSpan));
+limits = [left left+newSpan];
 end
