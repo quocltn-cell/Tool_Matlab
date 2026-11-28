@@ -1,4 +1,13 @@
-# Simulink Testing v1.2.82
+# Simulink Testing v1.3.0
+
+## v1.3.0 — Open Harness for each Run Test testcase
+
+- **MINOR** backward-compatible feature: Run Test displays an **Open Harness** button beside each imported testcase.
+- Opens the saved top-level harness and Signal Editor with that exact testcase's MAT scenario selected, including after Test Manager runs with another iteration.
+- Keeps Run Test checkbox selection independent and does not rebuild or save model changes.
+- Allows switching scenarios between Fast Restart simulations in stopped/initialized/compiled status; blocks when simulation is actively running.
+- Manual MATLAB/Simulink UI and model simulation tests are required.
+
 
 ## Release management
 

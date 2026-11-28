@@ -2,6 +2,12 @@
 
 Significant changes are recorded here in [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style and versions follow [SemVer](https://semver.org/).
 
+## [1.3.0] - 2026-11-28
+
+### Added
+- Open Harness button for each imported testcase in Run Test, setting its matching Signal Editor scenario for manual debugging.
+
+
 ## [1.2.82] - 2026-11-28
 
 ### Fixed

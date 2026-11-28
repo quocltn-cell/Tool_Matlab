@@ -145,10 +145,17 @@ testcaseCount = uilabel(testcaseToolbar, 'Text', 'Select an Excel file to import
     'FontColor', muted);
 testcaseSelectAll = uibutton(testcaseToolbar, 'Text', 'Select All', 'Enable', 'off', ...
     'ButtonPushedFcn', @(~, ~) toggleAllCases('imported'));
+% Keep logical checkbox data for Run Test and scenario mapping.
+% Visible scrollable rows have a real Open Harness button per testcase.
 testcaseList = uitable(testcaseGrid, 'Data', emptyTestcaseTable(), ...
     'ColumnName', {'Select', 'Test Case'}, 'ColumnEditable', [true false], ...
-    'ColumnWidth', {54, 'auto'}, 'RowName', {}, ...
-    'CellEditCallback', @(~, ~) refreshSelectAllButtons());
+    'ColumnWidth', {54, 'auto'}, 'RowName', {}, 'Visible', 'off');
+testcaseList.Layout.Row = 2;
+testcaseRows = uigridlayout(testcaseGrid,[1 3], ...
+    'ColumnWidth',{35,'1x',118}, 'RowHeight',{30}, ...
+    'Padding',[2 2 2 2], 'RowSpacing',3,'ColumnSpacing',5, ...
+    'Scrollable','on');
+testcaseRows.Layout.Row = 2;
 
 runSettings = uipanel(testLayout, 'Title', 'Test Settings', 'FontWeight', 'bold');
 runSettings.Layout.Row = 2;
@@ -387,6 +394,7 @@ updateProjectView();
         lastInfo = [];
         reportResult = [];
         testcaseList.Data = emptyTestcaseTable();
+        renderRunTestcaseRows();
         pendingList.Data = emptyTestcaseTable();
         testMessages.Value = {''};
         fastRestart.Value = false;
@@ -603,6 +611,7 @@ updateProjectView();
         pendingCatalog = struct('Kind',{},'File',{},'Sheet',{},'Name',{});
         if isempty(excelPaths)
             testcaseList.Data = emptyTestcaseTable();
+            renderRunTestcaseRows();
             pendingList.Data = emptyTestcaseTable();
             testcaseCount.Text = 'Select an Excel file to import test cases.';
             pendingCount.Text = 'No Excel test cases loaded.';
@@ -617,6 +626,7 @@ updateProjectView();
             current = unique(names(alreadyLoaded),'stable');
             testcaseList.Data = table(ismember(current, selectedRun), current, ...
                 'VariableNames', {'Selected', 'TestCase'});
+            renderRunTestcaseRows();
             visible = strings(0,1);
             checked = false(0,1);
             % Display a hierarchical list: File -> Sheet -> Testcase.
@@ -656,6 +666,7 @@ updateProjectView();
             previewError = string(failure.message);
             pendingList.Data = emptyTestcaseTable();
             testcaseList.Data = emptyTestcaseTable();
+            renderRunTestcaseRows();
             pendingCount.Text = ['Excel preview failed: ' failure.message];
             testcaseCount.Text = 'Could not preview Excel test cases.';
             refreshSelectAllButtons();
@@ -782,6 +793,48 @@ updateProjectView();
         newValue = ~all(rows.Selected);
         rows.Selected(:) = newValue;
         tbl.Data = rows;
+        if strcmp(whichList, 'imported')
+            renderRunTestcaseRows();
+        end
+        refreshSelectAllButtons();
+    end
+
+    function renderRunTestcaseRows()
+        % Keep a real button beside each imported scenario.
+        if ~isvalid(testcaseRows), return; end
+        delete(testcaseRows.Children);
+        rows = testcaseList.Data;
+        count = height(rows);
+        testcaseRows.RowHeight = repmat({30},1,max(1,count));
+        if count == 0
+            emptyLabel = uilabel(testcaseRows,'Text','No imported testcases.', ...
+                'FontColor',muted);
+            emptyLabel.Layout.Row = 1; emptyLabel.Layout.Column = [1 3];
+            return
+        end
+        for idx = 1:count
+            tick = uicheckbox(testcaseRows,'Text','', ...
+                'Value',logical(rows.Selected(idx)), ...
+                'Enable',matlab.lang.OnOffSwitchState(~busy), ...
+                'ValueChangedFcn',@(src,~) onRunCaseChecked(idx,src.Value));
+            tick.Layout.Row = idx; tick.Layout.Column = 1;
+            nameLabel = uilabel(testcaseRows,'Text',char(rows.TestCase(idx)), ...
+                'Tooltip',char(rows.TestCase(idx)));
+            nameLabel.Layout.Row = idx; nameLabel.Layout.Column = 2;
+            openCase = uibutton(testcaseRows,'Text','Open Harness', ...
+                'Enable',matlab.lang.OnOffSwitchState(~busy), ...
+                'Tooltip','Open harness with this testcase active in Signal Editor', ...
+                'ButtonPushedFcn',@(~,~) openHarnessForTestcase(rows.TestCase(idx)));
+            openCase.Layout.Row = idx; openCase.Layout.Column = 3;
+        end
+    end
+
+    function onRunCaseChecked(idx,value)
+        if busy, return; end
+        rows = testcaseList.Data;
+        if idx < 1 || idx > height(rows), return; end
+        rows.Selected(idx) = logical(value);
+        testcaseList.Data = rows;
         refreshSelectAllButtons();
     end
 
@@ -1628,9 +1681,11 @@ updateProjectView();
             testcaseSelectAll.Enable = 'off';
             pendingSelectAll.Enable = 'off';
             testcaseList.Enable = 'off';
+            renderRunTestcaseRows();
             pendingList.Enable = 'off';
         else
             testcaseList.Enable = 'on';
+            renderRunTestcaseRows();
             pendingList.Enable = 'on';
             refreshSelectAllButtons();
         end
@@ -1676,6 +1731,53 @@ updateProjectView();
         end
         if isfile(candidate)
             file = candidate;
+        end
+    end
+
+    function openHarnessForTestcase(testcaseName)
+        % Activate the corresponding MAT dataset, not the first scenario.
+        if busy, return; end
+        try
+            harnessFile = savedHarnessFile();
+            if isempty(harnessFile) || ~isfile(harnessFile)
+                error('BusHarnessApp:HarnessNotBuilt', ...
+                    'Build Harness before opening a testcase for debugging.');
+            end
+            [harness, ~, ~, scenarios] = testHarnessScenarios(harnessFile);
+            rows = testcaseList.Data;
+            scenarioNames = harnessScenarioNames(rows.TestCase);
+            match = find(rows.TestCase == string(testcaseName));
+            if numel(match) ~= 1
+                error('BusHarnessApp:DebugCase', ...
+                    'Testcase "%s" is not uniquely present in the imported list.', ...
+                    char(testcaseName));
+            end
+            scenario = scenarioNames(match);
+            if ~ismember(scenario,scenarios)
+                error('BusHarnessApp:DebugScenario', ...
+                    ['Scenario "%s" is missing from the Signal Editor MAT. ' ...
+                     'Reload Testcase or rebuild the Harness.'],char(scenario));
+            end
+            simState = string(get_param(harness,'SimulationStatus'));
+            if ~ismember(lower(simState),["stopped","initialized","compiled"])
+                error('BusHarnessApp:HarnessActive', ...
+                    'Cannot change Signal Editor scenario while simulation is %s.', ...
+                    char(simState));
+            end
+            editor = [char(harness) '/Signal Editor'];
+            % ActiveScenario can be changed between Fast Restart runs.
+            % Set it on the top-level harness, never the referenced model.
+            set_param(editor,'ActiveScenario',char(scenario));
+            if ~strcmp(string(get_param(editor,'ActiveScenario')),scenario)
+                error('BusHarnessApp:ScenarioSelection', ...
+                    'Signal Editor did not activate "%s".',char(scenario));
+            end
+            open_system(char(harness));
+            open_system(editor);
+            appendTestLog("Debug harness opened: " + string(testcaseName) + ...
+                " | Signal Editor scenario: " + scenario);
+        catch failure
+            uialert(app,failure.message,'Could Not Open Testcase Harness');
         end
     end
 
