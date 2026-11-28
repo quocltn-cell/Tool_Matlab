@@ -1,4 +1,13 @@
-# Simulink Testing v1.3.0
+# Simulink Testing v1.4.0
+
+## v1.4.0 — Restore Run Test split panels and run monitoring
+
+- Restored a visible vertical separator between the testcase list and the right-hand panes, and a horizontal separator between Test Settings and Run Log. Added a **Log height** slider to resize the right panes (25%–75% Run Log height).
+- Added run status labels for Preparing, Running, Compiling, Compiled (Fast Restart), Processing results, Completed, Completed with Failures, and Error; model status transitions are logged when observable.
+- Added a per-run elapsed clock in **whole seconds** and logged each iteration's `Duration` (seconds) from Simulink Test Manager when available. Test Manager's `SimulationInitialization` timing is logged per iteration when supported.
+- Compilation reporting is deliberately evidence-based: a model compile/initialization status observed during the run is reported separately from an **actual compiled-model count**. Actual count is shown only when Test Manager diagnostic messages explicitly report it; otherwise the Log says it is unavailable. No fabricated counts.
+- Timer-driven live display is best effort. MATLAB may defer timer callbacks while `run(tc)` executes synchronously; after completion the precise elapsed wall time is always displayed.
+- All code paths clean up timers on completion, errors, project switches and app close. Requires interactive MATLAB/Simulink testing.
 
 ## v1.3.0 — Open Harness for each Run Test testcase
 

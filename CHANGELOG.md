@@ -2,6 +2,15 @@
 
 Significant changes are recorded here in [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style and versions follow [SemVer](https://semver.org/).
 
+## [1.4.0] - 2026-11-28
+
+### Added
+- Run Test status monitor, elapsed seconds and per-iteration execution/init timing logs; best-effort compile model diagnostics.
+- Log height slider to resize Settings and Run Log panels.
+
+### Fixed
+- Restored visible split between testcase list, Test Settings and Run Log.
+
 ## [1.3.0] - 2026-11-28
 
 ### Added

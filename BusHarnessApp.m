@@ -10,6 +10,12 @@ paper = [0.96 0.97 0.99];
 muted = [0.30 0.36 0.45];
 lastInfo = [];
 busy = false;
+runMonitorTimer = [];
+runMonitorStarted = [];
+runMonitorHarness = '';
+runMonitorLastState = '';
+runMonitorRunning = false;
+runMonitorCompileEvents = strings(0,1);
 % The latest Test Manager result is valid only for this open project/run.
 reportResult = [];
 projectRoot = '';
@@ -118,13 +124,14 @@ openWelcome = uibutton(welcome, 'Text', 'Open Project', 'FontSize', 21, ...
     'ButtonPushedFcn', @(button, event) runWelcomeAction(button, event, @openProject));
 openWelcome.Layout.Row = 2;
 openWelcome.Layout.Column = 4;
-testLayout = uigridlayout(testTab, [3 2], ...
-    'RowHeight', {30, '1x', '1x'}, 'ColumnWidth', {'3x', '2x'}, ...
+testLayout = uigridlayout(testTab, [4 3], ...
+    'RowHeight', {30, '1x', 8, '1x'}, 'ColumnWidth', {'3x', 8, '2x'}, ...
     'Padding', [12 12 12 12], 'RowSpacing', 10, 'BackgroundColor', paper);
-testActions = uigridlayout(testLayout, [1 4], ...
-    'ColumnWidth', {94, 94, 0, '1x'}, 'Padding', [0 0 0 0]);
+testActions = uigridlayout(testLayout, [1 6], ...
+    'ColumnWidth', {94, 94, 0, '1x', 94, 112}, 'Padding', [0 0 0 0], ...
+    'ColumnSpacing', 6);
 testActions.Layout.Row = 1;
-testActions.Layout.Column = [1 2];
+testActions.Layout.Column = [1 3];
 runTestButton = uibutton(testActions, 'Text', 'Run Test', 'Enable', 'off', ...
     'BackgroundColor', blue, 'FontColor', [1 1 1], 'FontWeight', 'bold', ...
     'ButtonPushedFcn', @runSelectedTests);
@@ -135,7 +142,7 @@ genReportButton = uibutton(testActions, 'Text', 'Gen Report', 'Visible', 'off', 
     'Enable', 'off', 'ButtonPushedFcn', @openReportDialog, ...
     'Tooltip', 'Configure and export the latest Test Manager results to project/output');
 testcases = uipanel(testLayout, 'Title', 'Imported Test Cases', 'FontWeight', 'bold');
-testcases.Layout.Row = [2 3];
+testcases.Layout.Row = [2 4];
 testcases.Layout.Column = 1;
 testcaseGrid = uigridlayout(testcases, [2 1], 'RowHeight', {28, '1x'}, ...
     'Padding', [10 6 10 10], 'RowSpacing', 5);
@@ -156,10 +163,29 @@ testcaseRows = uigridlayout(testcaseGrid,[1 3], ...
     'Padding',[2 2 2 2], 'RowSpacing',3,'ColumnSpacing',5, ...
     'Scrollable','on');
 testcaseRows.Layout.Row = 2;
+% Visible separators restore the Run Test pane split. Use the slider in
+% the action bar to control the Settings / Run Log height ratio.
+verticalSplit = uipanel(testLayout,'BorderType','none', ...
+    'BackgroundColor',[0.75 0.79 0.85]);
+verticalSplit.Layout.Row = [2 4];
+verticalSplit.Layout.Column = 2;
+horizontalSplit = uipanel(testLayout,'BorderType','none', ...
+    'BackgroundColor',[0.75 0.79 0.85]);
+horizontalSplit.Layout.Row = 3;
+horizontalSplit.Layout.Column = 3;
+splitHeightLabel = uilabel(testActions,'Text','Log height','HorizontalAlignment','right', ...
+    'FontColor',muted,'FontSize',11);
+splitHeightLabel.Layout.Column = 5;
+logSplitSlider = uislider(testActions,'Limits',[25 75],'Value',50, ...
+    'MajorTicks',[25 50 75], 'MajorTickLabels',{}, ...
+    'Tooltip','Resize the Settings and Run Log panes', ...
+    'ValueChangingFcn',@(~,event) resizeRunLog(event.Value), ...
+    'ValueChangedFcn',@(~,event) resizeRunLog(event.Value));
+logSplitSlider.Layout.Column = 6;
 
 runSettings = uipanel(testLayout, 'Title', 'Test Settings', 'FontWeight', 'bold');
 runSettings.Layout.Row = 2;
-runSettings.Layout.Column = 2;
+runSettings.Layout.Column = 3;
 runOptions = uigridlayout(runSettings, [4 1], 'RowHeight', {22, 26, 22, 0}, ...
     'Padding', [8 6 8 6], 'RowSpacing', 4, 'Scrollable', 'on');
 fastRestart = uicheckbox(runOptions, 'Text', 'Fast Restart mode', ...
@@ -183,10 +209,22 @@ for k = 1:numel(metricLabels)
 end
 
 testLog = uipanel(testLayout, 'Title', 'Run Log', 'FontWeight', 'bold');
-testLog.Layout.Row = 3;
-testLog.Layout.Column = 2;
-testLogLayout = uigridlayout(testLog, [1 1], 'Padding', [10 6 10 10]);
+testLog.Layout.Row = 4;
+testLog.Layout.Column = 3;
+testLogLayout = uigridlayout(testLog, [2 1], 'RowHeight', {30,'1x'}, ...
+    'Padding', [10 6 10 10], 'RowSpacing',4);
+runMonitorBar = uigridlayout(testLogLayout,[1 3], ...
+    'ColumnWidth', {'1.2x','0.9x','1.1x'}, ...
+    'Padding',[0 0 0 0],'ColumnSpacing',6);
+runStatusLabel = uilabel(runMonitorBar,'Text','Status: Ready', ...
+    'FontWeight','bold', 'FontColor',muted);
+runElapsedLabel = uilabel(runMonitorBar,'Text','Elapsed: 0 s', ...
+    'FontWeight','bold','FontColor',navy);
+runCompileLabel = uilabel(runMonitorBar,'Text','Compile: not measured', ...
+    'Tooltip','Only observed compile events are counted; model hierarchy is not a compile count', ...
+    'FontColor',muted);
 testMessages = uitextarea(testLogLayout, 'Editable', 'off');
+
 
 % Create the menu panels after the main layout so they appear above it.
 menuPanel = uipanel(app, 'Visible', 'off', 'BorderType', 'none');
@@ -396,6 +434,12 @@ updateProjectView();
         testcaseList.Data = emptyTestcaseTable();
         renderRunTestcaseRows();
         pendingList.Data = emptyTestcaseTable();
+        stopRunMonitor();
+        runStatusLabel.Text = 'Status: Ready';
+        runElapsedLabel.Text = 'Elapsed: 0 s';
+        runCompileLabel.Text = 'Compile: not measured';
+        runMonitorStarted = [];
+        runMonitorHarness = '';
         testMessages.Value = {''};
         fastRestart.Value = false;
         simulationMode.Value = 'Normal';
@@ -1242,9 +1286,14 @@ updateProjectView();
         reportResult = [];
         updateReportButton();
         testMessages.Value = {'Preparing selected iterations...'};
+        runStatusLabel.Text = 'Status: Preparing';
+        runElapsedLabel.Text = 'Elapsed: 0 s';
+        runCompileLabel.Text = 'Compile: not measured';
+        runMonitorStarted = tic;
         drawnow;
         try
             [harness, model, ~, scenarios] = testHarnessScenarios(savedHarnessFile());
+            runMonitorHarness = char(harness);
             names = harnessScenarioNames(rows.TestCase);
             selected = names(rows.Selected);
             if ~isequal(sort(names), sort(scenarios))
@@ -1315,7 +1364,13 @@ updateProjectView();
             appendTestLog("Running: 0/" + string(totalCount));
             progressRow = numel(testMessages.Value);
             drawnow;
+            setRunStatus('Running');
+            startRunMonitor(harness);
+            % TestCase.run is synchronous. Timer callbacks can be delayed
+            % while MATLAB is busy; the final elapsed time is authoritative.
             result = run(tc);
+            stopRunMonitor();
+            setRunStatus('Processing results');
             latestReportResult = result;
             if isa(result, 'sltest.testmanager.ResultSet')
                 result = getTestCaseResults(result);
@@ -1336,6 +1391,29 @@ updateProjectView();
                     end
                     iterationStatus = iterationOutcomeText(details(j).Outcome);
                     appendTestLog(iterationLabel + ": " + iterationStatus);
+                    % Per-iteration duration is provided by Test Manager;
+                    % do not divide the total run duration between cases.
+                    try
+                        iterationSeconds = seconds(details(j).Duration);
+                        if isfinite(iterationSeconds) && iterationSeconds >= 0
+                            appendTestLog(sprintf('  Duration: %.0f s',iterationSeconds));
+                        end
+                    catch
+                    end
+                    % Release-specific compile diagnostics may appear in
+                    % LogMessages. Only count explicit named models.
+                    try
+                        addCompileDiagnostics(details(j).LogMessages);
+                    catch
+                    end
+                    try
+                        timing = getTimingInfo(details(j));
+                        initSec = double(timing.SimulationInitialization);
+                        if isfinite(initSec)
+                            appendTestLog(sprintf('  Simulation initialization: %.1f s',initSec));
+                        end
+                    catch
+                    end
                     switch lower(strtrim(iterationStatus))
                         case "passed"
                             passedCount = passedCount + 1;
@@ -1384,6 +1462,13 @@ updateProjectView();
                 summary = summary + " | " + string(unknownCount) + " Unknown";
             end
             appendTestLog(summary);
+            if failedCount > 0 || incompleteCount > 0 || unknownCount > 0
+                setRunStatus('Completed with Failures');
+            else
+                setRunStatus('Completed');
+            end
+            appendTestLog(sprintf('Run elapsed: %.0f s',toc(runMonitorStarted)));
+            appendTestLog('Compiled model count: ' + compileCountDescription());
             % Only completed runs have reportable Test Manager results.
             if processedCount > 0
                 reportResult = latestReportResult;
@@ -1423,7 +1508,132 @@ updateProjectView();
                 appendTestLog("Data viewer: " + string(dataFailure.message));
             end
         catch failure
+            stopRunMonitor();
+            setRunStatus('Error');
             appendTestLog("Run Test failed: " + string(failure.message));
+            appendTestLog(sprintf('Run elapsed before error: %.0f s',toc(runMonitorStarted)));
+            if ~isempty(failure.stack)
+                appendTestLog(sprintf('  Source: %s:%d', ...
+                    failure.stack(1).name, failure.stack(1).line));
+            end
+        end
+        stopRunMonitor();
+    end
+
+    function resizeRunLog(value)
+        fraction = max(25,min(75,double(value)));
+        testLayout.RowHeight = {30, sprintf('%gx',100-fraction),8, ...
+            sprintf('%gx',fraction)};
+    end
+
+    function setRunStatus(status)
+        if ~isgraphics(app), return; end
+        runStatusLabel.Text = 'Status: ' + string(status);
+        switch lower(string(status))
+            case {"error","failed","completed with failures"}
+                runStatusLabel.FontColor = [0.8 0.17 0.15];
+            case {"completed","passed"}
+                runStatusLabel.FontColor = [0.12 0.52 0.28];
+            case {"running","compiling","initializing","processing results"}
+                runStatusLabel.FontColor = blue;
+            otherwise
+                runStatusLabel.FontColor = muted;
+        end
+        drawnow limitrate nocallbacks;
+    end
+
+    function startRunMonitor(harness)
+        stopRunMonitor();
+        runMonitorHarness = char(harness);
+        runMonitorLastState = '';
+        runMonitorCompileEvents = strings(0,1);
+        runMonitorRunning = true;
+        runMonitorTimer = timer('ExecutionMode','fixedSpacing', ...
+            'Period',1,'BusyMode','drop', ...
+            'TimerFcn',@(~,~) updateRunMonitor());
+        start(runMonitorTimer);
+        updateRunMonitor();
+    end
+
+    function updateRunMonitor()
+        if ~runMonitorRunning || ~isgraphics(app), return; end
+        if ~isempty(runMonitorStarted)
+            runElapsedLabel.Text = sprintf('Elapsed: %.0f s',toc(runMonitorStarted));
+        end
+        try
+            [~,name] = fileparts(runMonitorHarness);
+            state = char(get_param(name,'SimulationStatus'));
+            if ~strcmpi(state,runMonitorLastState)
+                runMonitorLastState = state;
+                appendTestLog('Model status: ' + string(state));
+                switch lower(state)
+                    case {'initializing','compiling'}
+                        setRunStatus('Compiling / ' + string(state));
+                        if ~any(runMonitorCompileEvents == string(name))
+                            runMonitorCompileEvents(end+1) = string(name);
+                            appendTestLog('Compile state observed: ' + string(name));
+                        end
+                    case 'compiled'
+                        setRunStatus('Compiled (Fast Restart)');
+                    case {'running','restarting','paused','stopping'}
+                        setRunStatus(state);
+                    otherwise
+                        % Do not mislabel the run as complete just because
+                        % a Fast Restart model is temporarily compiled.
+                end
+            end
+        catch
+            % Simulink/Model Reference versions differ in status support.
+        end
+        if ~contains(string(runCompileLabel.Text),'(Test Manager log)')
+            runCompileLabel.Text = 'Compile observed: ' + ...
+                string(numel(runMonitorCompileEvents)) + ' model(s)';
+        end
+    end
+
+    function stopRunMonitor()
+        runMonitorRunning = false;
+        if ~isempty(runMonitorTimer)
+            try
+                if isvalid(runMonitorTimer)
+                    stop(runMonitorTimer);
+                    delete(runMonitorTimer);
+                end
+            catch
+            end
+            runMonitorTimer = [];
+        end
+        if ~isempty(runMonitorStarted) && isgraphics(app)
+            runElapsedLabel.Text = sprintf('Elapsed: %.0f s',toc(runMonitorStarted));
+        end
+    end
+
+    function addCompileDiagnostics(messages)
+        texts = string(messages);
+        for ii = 1:numel(texts)
+            msg = texts(ii);
+            if contains(lower(msg),'compil')
+                appendTestLog('  Compile log: ' + msg);
+                % Only log diagnostics as a factual count if the source
+                % message explicitly says a number of models was compiled.
+                numericCount = regexp(char(msg), ...
+                    '(?i)(\d+)\s+models?\s+(?:were\s+)?compiled', ...
+                    'tokens','once');
+                if ~isempty(numericCount)
+                    runCompileLabel.Text = "Compiled: " + string(numericCount{1}) + ...
+                        ' (Test Manager log)';
+                end
+            end
+        end
+    end
+
+    function desc = compileCountDescription()
+        if contains(runCompileLabel.Text,'(Test Manager log)')
+            desc = string(runCompileLabel.Text);
+        else
+            desc = 'not reported by Test Manager (' + ...
+                string(numel(runMonitorCompileEvents)) + ...
+                ' top-model compile/init event(s) observed; not a compile total)';
         end
     end
 
@@ -1433,9 +1643,9 @@ updateProjectView();
         genReportButton.Visible = matlab.lang.OnOffSwitchState(available);
         genReportButton.Enable = matlab.lang.OnOffSwitchState(available && ~busy);
         if available
-            testActions.ColumnWidth = {94, 94, 110, '1x'};
+            testActions.ColumnWidth = {94, 94, 110, '1x',94,112};
         else
-            testActions.ColumnWidth = {94, 94, 0, '1x'};
+            testActions.ColumnWidth = {94, 94, 0, '1x',94,112};
         end
     end
 
@@ -1800,6 +2010,7 @@ updateProjectView();
 
     function closeApp(~, ~)
         if ~busy && saveSelection()
+            stopRunMonitor();
             delete(app);
         end
     end
