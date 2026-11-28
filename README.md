@@ -1,3 +1,15 @@
+# Simulink Testing v1.2.80
+
+## Release management
+
+Versions follow **Semantic Versioning 2.0.0** (`MAJOR.MINOR.PATCH`). The canonical version is in `VERSION`, retrieved at runtime by `simulinkTestingVersion.m`. See [`VERSIONING.md`](VERSIONING.md) for when to bump each component, instructions and examples. Use `python tools/bump_version.py <patch|minor|major> --note "Description"` on the next release. Detailed release notes: [`CHANGELOG.md`](CHANGELOG.md).
+
+## v1.2.80 — Introduce semantic versioning (PATCH)
+
+- Documented the criteria for compatible fixes, new capabilities, and breaking changes; prepared a repeatable bump, verification and release workflow.
+- Aligned the runtime ToolVersion with the released artifact through one canonical VERSION file (previous versions had a stale hardcoded ToolVersion in `createBusTestHarness.m`).
+- User-visible tool behavior is otherwise unchanged.
+
 # Simulink Testing v1.2.79
 
 ## v1.2.79 — Drag-to-zoom pointer modes and SDI Fit shortcuts

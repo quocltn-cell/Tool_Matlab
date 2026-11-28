@@ -11,5 +11,5 @@ assert "set_param(name, 'FastRestart', requested)" in s
 assert "applyRunSettings(tf, tc, harness);" in s
 assert "setHarnessFastRestart(savedHarnessFile(), logical(fastRestart.Value))" in s
 assert s.index("configureOutputLoggingForTest(tc,harness)") < s.index("applyRunSettings(tf, tc, harness);")
-assert 'toolVersion = "1.2.77";' in (Path(__file__).resolve().parents[1] / "createBusTestHarness.m").read_text(encoding="utf-8")
+assert 'toolVersion = simulinkTestingVersion();' in (Path(__file__).resolve().parents[1] / "createBusTestHarness.m").read_text(encoding="utf-8")
 print("PASS: Fast Restart checkbox and Run Test synchronize harness and Test Manager")

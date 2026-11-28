@@ -19,7 +19,7 @@ arguments
     existingHarness (1,1) string = ""
 end
 
-toolVersion = "1.2.77";
+toolVersion = simulinkTestingVersion();
 if model == ""
     [model, excelFile] = selectHarnessFiles(toolVersion);
     if model == ""
