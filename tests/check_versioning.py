@@ -12,6 +12,7 @@ assert readme.startswith('# Simulink Testing v' + version + '\n')
 assert f'## [{version}] - ' in change
 assert 'toolVersion = simulinkTestingVersion();' in harness
 assert "fileread(fullfile(root, 'VERSION'))" in resolver
-assert (root / 'VERSIONING.md').is_file()
+assert (root / 'semantic.md').is_file()
+assert not (root / '.github' / 'workflows').exists()
 assert (root / 'tools/bump_version.py').is_file()
 print(f'PASS: v{version} SemVer, README, CHANGELOG and runtime version synchronized')

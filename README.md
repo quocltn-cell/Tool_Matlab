@@ -1,8 +1,12 @@
-# Simulink Testing v1.2.81
+# Simulink Testing v1.2.82
 
 ## Release management
 
-Versions follow **Semantic Versioning 2.0.0** (`MAJOR.MINOR.PATCH`). The canonical version is in `VERSION`, retrieved at runtime by `simulinkTestingVersion.m`. See [`VERSIONING.md`](VERSIONING.md) for when to bump each component, instructions and examples. Use `python tools/bump_version.py <patch|minor|major> --note "Description"` on the next release. Detailed release notes: [`CHANGELOG.md`](CHANGELOG.md).
+Versions follow **Semantic Versioning 2.0.0** (`MAJOR.MINOR.PATCH`). The canonical version is in `VERSION`, retrieved at runtime by `simulinkTestingVersion.m`. See [`semantic.md`](semantic.md) for all versioning rules and release steps. Use `python tools/bump_version.py <patch|minor|major> --note "Description"` on the next release. Detailed release notes: [`CHANGELOG.md`](CHANGELOG.md).
+
+## v1.2.82 — Simplify version rules into semantic.md and remove GitHub Actions workflow
+
+- Release type: **PATCH**.
 
 ## v1.2.81 — Fix cursor slider position and Output drag-to-zoom gestures
 
