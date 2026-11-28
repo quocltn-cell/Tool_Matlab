@@ -1,4 +1,11 @@
-# Simulink Testing v1.4.0
+# Simulink Testing v1.4.1
+
+## v1.4.1 — Restore bordered testcase rows and simplify Run Log scrolling
+
+- **PATCH:** Removed the Log height slider and fixed the Run Log panel to the lower-right half of the Run Test tab; the read-only MATLAB text area has built-in vertical scrolling for long logs.
+- Restored a visible separate border around **each** Imported Test Case, preserving its checkbox, name, and **Open Harness** button.
+- Preserved the visible vertical/horizontal separators, status/elapsed/compile monitor and report functionality.
+- MATLAB UI runtime interaction still needs testing.
 
 ## v1.4.0 — Restore Run Test split panels and run monitoring
 

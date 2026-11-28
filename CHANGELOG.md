@@ -2,6 +2,12 @@
 
 Significant changes are recorded here in [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style and versions follow [SemVer](https://semver.org/).
 
+## [1.4.1] - 2026-11-28
+
+### Fixed
+- Remove the Run Test Log height control and rely on the Run Log textarea's vertical scrolling.
+- Restore bordered cards for each imported testcase while retaining checkbox and Open Harness.
+
 ## [1.4.0] - 2026-11-28
 
 ### Added

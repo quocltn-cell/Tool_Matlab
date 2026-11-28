@@ -3,7 +3,7 @@ from pathlib import Path
 s=(Path(__file__).resolve().parents[1]/'BusHarnessApp.m').read_text()
 assert "testcaseRows = uigridlayout(testcaseGrid" in s
 assert "'Scrollable','on'" in s
-assert "openCase = uibutton(testcaseRows,'Text','Open Harness'" in s
+assert "openCase = uibutton(caseRow,'Text','Open Harness'" in s
 assert "'ButtonPushedFcn',@(~,~) openHarnessForTestcase(rows.TestCase(idx))" in s
 assert 'rows.Selected(idx) = logical(value)' in s
 assert 'testcaseList.Data = rows;' in s
